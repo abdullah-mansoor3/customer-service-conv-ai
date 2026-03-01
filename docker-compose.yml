@@ -1,0 +1,89 @@
+version: "3.9"
+
+# ── Services ──────────────────────────────────────────────────────────────
+#
+#  backend      – FastAPI server (REST + WebSocket)  → http://localhost:8000
+#  frontend     – Web UI                             → http://localhost:3000
+#  llama-server – llama.cpp inference server         → http://localhost:8080
+#                 (see comment block near the bottom — run it on the host or
+#                  uncomment the service entry once the LLM team sets it up)
+#
+# Quick start:
+#   docker compose up --build
+#   docker compose up --build backend    # backend only
+#   docker compose logs -f backend       # follow logs
+# ──────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Backend ──────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: conv-ai-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # URL of the llama-server instance the backend will proxy to.
+      # If llama-server runs on the host machine use host.docker.internal
+      # instead of 127.0.0.1.  If it runs as the service below, use
+      # http://llama-server:8080.
+      - LLAMA_SERVER_URL=http://host.docker.internal:8080
+      # System prompt injected at the start of every conversation.
+      # TODO (Conversation Team): replace with your domain-specific prompt.
+      - SYSTEM_PROMPT=You are a helpful customer service assistant. Be concise and friendly.
+    # Volume mount for hot-reload during development.
+    # Remove in production.
+    volumes:
+      - ./backend/app:/app/app
+    restart: unless-stopped
+    networks:
+      - conv-ai-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ── Frontend ──────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: conv-ai-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - conv-ai-net
+
+  # ── llama-server (LLM Team) ───────────────────────────────────────────────
+  # Uncomment once the LLM team has a Docker image or build context ready.
+  # The backend expects this service at http://llama-server:8080.
+  # Also change LLAMA_SERVER_URL in the backend service above to:
+  #   http://llama-server:8080
+  #
+  # llama-server:
+  #   image: ghcr.io/ggerganov/llama.cpp:server   # official pre-built image
+  #   container_name: conv-ai-llama
+  #   ports:
+  #     - "8080:8080"
+  #   volumes:
+  #     - ./models:/models:ro      # mount your .gguf files here
+  #   command: >
+  #     -m /models/model.gguf
+  #     --host 0.0.0.0
+  #     --port 8080
+  #     --ctx-size 2048
+  #   restart: unless-stopped
+  #   networks:
+  #     - conv-ai-net
+
+# ── Networks ──────────────────────────────────────────────────────────────
+networks:
+  conv-ai-net:
+    driver: bridge
