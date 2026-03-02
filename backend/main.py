@@ -1,9 +1,11 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 import os
 import certifi
+import uuid
+import json
 
 app = FastAPI(title="Llama.cpp Backend Proxy")
 
@@ -18,60 +20,106 @@ app.add_middleware(
 
 LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
 
-class ChatRequest(BaseModel):
-    message: str
-    system_prompt: str = "You are a helpful AI assistant. Always respond concisely and stop generating text once you have answered the question."
-    temperature: float = 0.7
+# In-memory session store
+sessions = {}
+MAX_HISTORY = 10
 
-class ChatResponse(BaseModel):
-    response: str
-
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequest):
-    """
-    Proxies a chat request to the local llama-server.
-    By using the /v1/chat/completions endpoint with a 'messages' array,
-    llama.cpp will automatically format this using the model's native chat template
-    (e.g., ChatML, Llama-3, etc.), ensuring full compatibility regardless of the model loaded!
-    """
+@app.websocket("/ws/chat")
+async def websocket_chat(websocket: WebSocket):
+    await websocket.accept()
     
-    # We construct the messages array which llama.cpp natively translates
-    # into the correct chat template (like ChatML or Llama-3 limits).
-    payload = {
-        "messages": [
-            {
-                "role": "system",
-                "content": request.system_prompt
-            },
-            {
-                "role": "user",
-                "content": request.message
-            }
-        ],
-        "temperature": request.temperature,
-        "max_tokens": -1,  # Let it generate naturally up to limit
-        "stream": False    # For a simple stateless backend, we await the full response first
-    }
-
     try:
-        # Provide extended timeout for LLM generation
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                f"{LLAMA_SERVER_URL}/v1/chat/completions",
-                json=payload
-            )
-            response.raise_for_status()
+        while True:
+            # Wait for message from client
+            # Format expected: {"message": "Hello", "session_id": "optional-uuid"}
+            raw_data = await websocket.receive_text()
             
-            data = response.json()
-            # Extract the raw text from the OpenAI-compatible response format
-            generated_text = data['choices'][0]['message']['content']
+            try:
+                data = json.loads(raw_data)
+                user_message = data.get("message", "").strip()
+                session_id = data.get("session_id")
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "error", "error": "Invalid JSON format"})
+                continue
+                
+            if not user_message:
+                await websocket.send_json({"type": "error", "error": "Message cannot be empty"})
+                continue
+                
+            # Generate or retrieve session
+            session_id = session_id or str(uuid.uuid4())
+            if session_id not in sessions:
+                sessions[session_id] = []
+                
+            sessions[session_id].append({"role": "user", "content": user_message})
             
-            return ChatResponse(response=generated_text)
+            # Keep only the last MAX_HISTORY messages
+            history = sessions[session_id][-MAX_HISTORY:]
+
+            # Construct messages array
+            system_prompt = "You are a helpful customer service assistant. Be concise and friendly."
+            messages = [{"role": "system", "content": system_prompt}]
+            messages.extend(history)
             
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=f"LLM Server Error: {e.response.text}")
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=503, detail="Could not connect to the local Llama Server. Is it running?")
+            payload = {
+                "messages": messages,
+                "temperature": 0.7,
+                "max_tokens": -1,
+                "stream": True
+            }
+
+            full_response = ""
+            try:
+                # Use a larger timeout since we are streaming tokens as they generate
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    async with client.stream(
+                        "POST", 
+                        f"{LLAMA_SERVER_URL}/v1/chat/completions",
+                        json=payload
+                    ) as response:
+                        response.raise_for_status()
+                        
+                        # First item back is the generated session ID in case the client needs it
+                        await websocket.send_json({"type": "session_id", "session_id": session_id})
+                        
+                        async for line in response.aiter_lines():
+                            if not line.startswith("data:"):
+                                continue
+                                
+                            chunk = line[len("data:"):].strip()
+                            if chunk == "[DONE]":
+                                break
+                                
+                            try:
+                                delta = json.loads(chunk)
+                                token = delta["choices"][0]["delta"].get("content", "")
+                                if token:
+                                    full_response += token
+                                    # Forward token to client
+                                    await websocket.send_json({
+                                        "type": "token",
+                                        "token": token,
+                                        "done": False
+                                    })
+                            except (json.JSONDecodeError, KeyError):
+                                continue
+                                
+                    # Send end of stream marker
+                    await websocket.send_json({"type": "token", "token": "", "done": True})
+                    
+                    # Store assistant response in history
+                    sessions[session_id].append({"role": "assistant", "content": full_response})
+                    
+            except httpx.HTTPStatusError as e:
+                sessions[session_id].pop() # Revert user message
+                await websocket.send_json({"type": "error", "error": f"LLM Server Error: {e.response.status_code}"})
+            except httpx.RequestError:
+                sessions[session_id].pop() # Revert user message
+                await websocket.send_json({"type": "error", "error": "Could not connect to the local Llama Server. Is it running?"})
+                
+    except WebSocketDisconnect:
+        # Client disconnected
+        pass
 
 @app.get("/api/health")
 async def health_check():

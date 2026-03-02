@@ -24,15 +24,8 @@ services:
     container_name: conv-ai-backend
     ports:
       - "8000:8000"
-    environment:
-      # URL of the llama-server instance the backend will proxy to.
-      # If llama-server runs on the host machine use host.docker.internal
-      # instead of 127.0.0.1.  If it runs as the service below, use
-      # http://llama-server:8080.
-      - LLAMA_SERVER_URL=http://host.docker.internal:8080
-      # System prompt injected at the start of every conversation.
-      # TODO (Conversation Team): replace with your domain-specific prompt.
-      - SYSTEM_PROMPT=You are a helpful customer service assistant. Be concise and friendly.
+    env_file:
+      - .env
     # Volume mount for hot-reload during development.
     # Remove in production.
     volumes:
