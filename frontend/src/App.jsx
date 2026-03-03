@@ -1,10 +1,46 @@
+// import { useState } from 'react'
+// import reactLogo from './assets/react.svg'
+// import viteLogo from '/vite.svg'
+// import './App.css'
+
+// function App() {
+//   const [count, setCount] = useState(0)
+
+//   return (
+//     <>
+//       <div>
+//         <a href="https://vite.dev" target="_blank">
+//           <img src={viteLogo} className="logo" alt="Vite logo" />
+//         </a>
+//         <a href="https://react.dev" target="_blank">
+//           <img src={reactLogo} className="logo react" alt="React logo" />
+//         </a>
+//       </div>
+//       <h1>Vite + React</h1>
+//       <div className="card">
+//         <button onClick={() => setCount((count) => count + 1)}>
+//           count is {count}
+//         </button>
+//         <p>
+//           Edit <code>src/App.jsx</code> and save to test HMR
+//         </p>
+//       </div>
+//       <p className="read-the-docs">
+//         Click on the Vite and React logos to learn more
+//       </p>
+//     </>
+//   )
+// }
+
+// export default App
+
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
 function App() {
   // const [messages, setMessages] = useState([]); // Stores the chat history
   const [messages, setMessages] = useState([
-    { role: 'ai', content: "Hello! I'm your Customer Service Assistant AI. How can I help you today?" }
+    { role: 'ai', content: "Hello! I'm your Dental Assistant AI. How can I help you today?" }
   ]);
   const [input, setInput] = useState('');
   const [chatHistory, setChatHistory] = useState([]);
@@ -12,17 +48,14 @@ function App() {
   const [isTyping, setIsTyping] = useState(false);
   const socket = useRef(null);
   const scrollRef = useRef(null);
-  const IS_OFFLINE = false;
+  const IS_OFFLINE = true;
 
   // 1. Setup WebSocket Connection
   useEffect(() => {
     if (IS_OFFLINE) return; // Don't try to connect if we are testing locally
 
-    // Note the {currentChatId} in the URL string
-    // This tells the browser: "Use the same host I'm currently on, but go to the /ws/ path"
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socketUrl = `${protocol}//${window.location.host}/ws/chat/${currentChatId || 'default'}`;
-      socket.current = new WebSocket(socketUrl);
+    // Replace with your teammate's actual IP/URL (e.g., ws://192.168.1.10:8000/ws)
+    socket.current = new WebSocket('ws://localhost:8000/ws/chat');
 
     socket.current.onopen = () => console.log("✅ Connected to AI Backend");
     
@@ -31,12 +64,12 @@ function App() {
         const data = JSON.parse(event.data);
         
         // Standard streaming pattern: backend sends { "type": "token", "content": "Hello" }
-        if (data.type === 'token' && data.token) {
-          updateLastAiMessage(data.token);
+        if (data.type === 'token') {
+          updateLastAiMessage(data.content);
         } 
         
         // Backend sends { "type": "end" } when the sentence is finished
-        if (data.done === true) {
+        if (data.type === 'end') {
           setIsTyping(false);
         }
       } catch (err) {
@@ -56,18 +89,6 @@ function App() {
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-
-  // Function to create a session on the backend
-  const createBackendSession = async () => {
-    const response = await fetch('http://localhost:8000/api/sessions', { method: 'POST' });
-    const data = await response.json();
-    setCurrentChatId(data.session_id); // This ID goes into your WebSocket URL
-  };
-
-  // Function to delete session when "New Chat" is pressed
-  const deleteBackendSession = async (id) => {
-    await fetch(`http://localhost:8000/api/sessions/${id}`, { method: 'DELETE' });
-  };
 
   const updateLastAiMessage = (token) => {
     setMessages((prev) => {
@@ -172,65 +193,73 @@ function App() {
     setCurrentChatId(selectedChat.id);
     setIsTyping(false);
   };
-
+  
   return (
-    <div className="app-container">
-      {/* SIDEBAR */}
-      <aside className="sidebar">
-        <button className="new-chat-btn" onClick={resetChat}>+ New Chat</button>
-        
-        <div className="history-list">
-          <p className="history-label">Recent Chats</p>
-          {chatHistory.map((chat, index) => (
+  <div className="app-container">
+    {/* Background Shapes */}
+    <div className="bg-decoration">
+      <div className="shape circle s1"></div>
+      <div className="shape circle s2"></div>
+      <div className="shape bug b1"></div>
+      <div className="shape bug b2"></div>
+    </div>
+
+    <aside className="sidebar">
+      <button className="new-chat-btn" onClick={resetChat}>+ New Chat \⁠(⁠๑⁠╹⁠◡⁠╹⁠๑⁠)⁠ﾉ</button>
+      <div className="history-list">
+        <p className="history-label">Recent Chats (⁠・⁠–⁠・⁠;⁠)⁠ゞ</p>
+        {chatHistory.map((chat, index) => (
           <div 
-            key={index} 
+            key={chat.id} 
             className={`history-item ${currentChatId === chat.id ? 'active' : ''}`}
-            onClick={() => handleSwitchChat(chat)} // Change this line
+            onClick={() => handleSwitchChat(chat)}
           >
             {chat.title}...
           </div>
         ))}
-        </div>
-        
-        <div className="user-profile">NLP Project Group</div>
-      </aside>
+      </div>
+    </aside>
 
-      {/* MAIN CHAT */}
-      <main className="chat-main">
-        <header className="chat-header">Conversational AI Assistant</header>
-        
-        <div className="message-list">
-          {messages.map((msg, index) => (
-            <div key={index} className={`message-row ${msg.role}`}>
-              <div className="avatar">{msg.role === 'user' ? 'U' : 'AI'}</div>
-              <div className="message-content">{msg.content}</div>
-            </div>
-          ))}
-          {isTyping && (
-            <div className="typing-indicator">
-              <div className="dot"></div>
-              <div className="dot"></div>
-              <div className="dot"></div>
-              <span>AI is thinking...</span>
-            </div>
-          )}
-          <div ref={scrollRef} />
-        </div>
-
-        <div className="input-area">
-          <div className="input-container">
-            <input 
-              value={input} 
-              onChange={(e) => setInput(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-              placeholder="Type your message..." 
-            />
-            <button onClick={handleSend}>Send</button>
+    <main className="chat-main">
+      <header className="chat-header">
+        <span>Customer Service ヾ⁠(⁠･⁠ω⁠･⁠*⁠)⁠ﾉ</span>
+      </header>
+      
+     <div className="message-list">
+      {messages.map((msg, index) => (
+        <div key={index} className={`message-row ${msg.role}`}>
+          <div className="avatar">
+            {msg.role === 'user' ? '(⁠╹⁠▽⁠╹⁠⁠)' : '(⁠≧⁠▽⁠≦⁠)'} 
           </div>
+          <div className="message-content">{msg.content}</div>
         </div>
-      </main>
+      ))}
+      
+      {isTyping && (
+        <div className="typing-indicator">
+          <div className="dot"></div>
+          <div className="dot"></div>
+          <div className="dot"></div>
+          <span>us ko sochne do... (⁠･⁠o⁠･⁠;⁠)</span>
+        </div>
+      )}
+      <div ref={scrollRef} />
     </div>
-  );
+
+      <div className="input-area">
+        <div className="input-container">
+          <input 
+            value={input} 
+            onChange={(e) => setInput(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+            placeholder="Type a message..." 
+          />
+          <button onClick={handleSend}>Send</button>
+        </div>
+      </div>
+    </main>
+  </div>
+);
 }
 
 export default App;
