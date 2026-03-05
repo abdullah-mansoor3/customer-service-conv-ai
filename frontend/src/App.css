@@ -110,12 +110,34 @@
 
 .message-row {
   display: flex;
-  padding: 35px 15%; 
-  gap: 30px;
+  padding: 20px 15%;
+  gap: 15px;
+  align-items: flex-start;
 }
 
-.message-row.user {
-  background-color: var(--user-msg-bg);
+/* User is on the left (default) */
+.user-side {
+  flex-direction: row-reverse; /* Avatar left, text right */
+  justify-content: flex-start;
+}
+
+/* AI is on the right */
+.ai-side {
+  flex-direction: row; /* Avatar right, text left */
+  justify-content: flex-start;
+}
+
+/* Optional: Different bubble colors for better contrast */
+.user-side .message-content {
+  background: var(--user-msg-bg);
+  padding: 12px;
+  border-radius: 12px;
+}
+
+.ai-side .message-content {
+  background: var(--bg-sidebar);
+  padding: 12px;
+  border-radius: 12px;
 }
 
 .avatar {
@@ -155,6 +177,14 @@
   animation: bounce 1.4s infinite ease-in-out;
 }
 
+.dot:nth-child(1) { animation-delay: -0.32s; }
+.dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes bounce {
+  0%, 80%, 100% { transform: scale(0); opacity: 0.3; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
 /* INPUT AREA */
 .input-area {
   position: absolute;
@@ -173,6 +203,23 @@
   border-radius: 25px;
   padding: 12px 25px;
   box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+  transition: all 0.2s ease;
+  align-items: flex-end; /* Keeps the Send button at the bottom of the box */
+}
+
+.input-container textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: white;
+  font-size: 1.1rem;
+  resize: none; /* Prevents user from manually resizing it */
+  min-height: 25px;
+  max-height: 200px; /* Limits growth so it doesn't take up the whole screen */
+  overflow-y: auto;  /* Adds scroll if it gets too long */
+  padding: 8px 0;
+  font-family: inherit;
 }
 
 .input-container input {

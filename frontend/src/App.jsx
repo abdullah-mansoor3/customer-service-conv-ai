@@ -1,39 +1,3 @@
-// import { useState } from 'react'
-// import reactLogo from './assets/react.svg'
-// import viteLogo from '/vite.svg'
-// import './App.css'
-
-// function App() {
-//   const [count, setCount] = useState(0)
-
-//   return (
-//     <>
-//       <div>
-//         <a href="https://vite.dev" target="_blank">
-//           <img src={viteLogo} className="logo" alt="Vite logo" />
-//         </a>
-//         <a href="https://react.dev" target="_blank">
-//           <img src={reactLogo} className="logo react" alt="React logo" />
-//         </a>
-//       </div>
-//       <h1>Vite + React</h1>
-//       <div className="card">
-//         <button onClick={() => setCount((count) => count + 1)}>
-//           count is {count}
-//         </button>
-//         <p>
-//           Edit <code>src/App.jsx</code> and save to test HMR
-//         </p>
-//       </div>
-//       <p className="read-the-docs">
-//         Click on the Vite and React logos to learn more
-//       </p>
-//     </>
-//   )
-// }
-
-// export default App
-
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
@@ -210,14 +174,19 @@ function App() {
       </div>
 
       <aside className="sidebar">
-        <button className="new-chat-btn" onClick={resetChat}>+ New Chat \⁠(⁠๑⁠╹⁠◡⁠╹⁠๑⁠)⁠ﾉ</button>
+        <button 
+          className="new-chat-btn" 
+          onClick={resetChat}
+          disabled={isTyping} // Disable when AI is busy
+        >
+          + New Chat \⁠(⁠๑⁠╹⁠◡⁠╹⁠๑⁠)⁠ﾉ
+        </button>
         <div className="history-list">
-          <p className="history-label">Recent Chats (⁠・⁠–⁠・⁠;⁠)⁠ゞ</p>
-          {chatHistory.map((chat, index) => (
-            <div
-              key={chat.id}
-              className={`history-item ${currentChatId === chat.id ? 'active' : ''}`}
-              onClick={() => handleSwitchChat(chat)}
+          {chatHistory.map((chat) => (
+            <div 
+              key={chat.id} 
+              className={`history-item ${currentChatId === chat.id ? 'active' : ''} ${isTyping ? 'disabled' : ''}`}
+              onClick={() => !isTyping && handleSwitchChat(chat)} // Only click if not typing
             >
               {chat.title}...
             </div>
@@ -232,7 +201,7 @@ function App() {
 
         <div className="message-list">
           {messages.map((msg, index) => (
-            <div key={index} className={`message-row ${msg.role}`}>
+            <div key={index} className={`message-row ${msg.role === 'user' ? 'user-side' : 'ai-side'}`}>
               <div className="avatar">
                 {msg.role === 'user' ? '(⁠╹⁠▽⁠╹⁠⁠)' : '(⁠≧⁠▽⁠≦⁠)'}
               </div>
@@ -253,13 +222,33 @@ function App() {
 
         <div className="input-area">
           <div className="input-container">
-            <input
-              value={input}
+            <textarea 
+              value={input} 
               onChange={(e) => setInput(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-              placeholder="Type a message..."
+              onInput={(e) => {
+                // This resets height to 'auto' to shrink when deleting, 
+                // then sets it to scrollHeight to grow
+                e.target.style.height = 'auto';
+                e.target.style.height = e.target.scrollHeight + 'px';
+              }}
+              onKeyPress={(e) => {
+                // Only send on Enter (without Shift for new line)
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                  e.target.style.height = 'auto';
+                }
+              }}
+              placeholder={isTyping ? "AI is thinking..." : "Type a message..."}
+              disabled={isTyping}
+              rows="1" // Start small
             />
-            <button onClick={handleSend}>Send</button>
+            <button 
+              onClick={handleSend} 
+              disabled={isTyping} // Disable button while typing
+            >
+              {isTyping ? "..." : "Send"}
+            </button>
           </div>
         </div>
       </main>
