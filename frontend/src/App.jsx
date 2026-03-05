@@ -40,7 +40,7 @@ import './App.css';
 function App() {
   // const [messages, setMessages] = useState([]); // Stores the chat history
   const [messages, setMessages] = useState([
-    { role: 'ai', content: "Hello! I'm your Dental Assistant AI. How can I help you today?" }
+    { role: 'ai', content: "Hello! I'm your ISP Tech Support Agent. I'm sorry to hear you're having internet issues. Let's get this fixed! Are you currently connected via Wi-Fi or a wired ethernet cable?" }
   ]);
   const [input, setInput] = useState('');
   const [chatHistory, setChatHistory] = useState([]);
@@ -48,27 +48,32 @@ function App() {
   const [isTyping, setIsTyping] = useState(false);
   const socket = useRef(null);
   const scrollRef = useRef(null);
-  const IS_OFFLINE = true;
+  const IS_OFFLINE = false;
 
   // 1. Setup WebSocket Connection
   useEffect(() => {
     if (IS_OFFLINE) return; // Don't try to connect if we are testing locally
 
-    // Replace with your teammate's actual IP/URL (e.g., ws://192.168.1.10:8000/ws)
+    // backend/main.py route is /ws/chat (session_id is sent in the JSON payload)
     socket.current = new WebSocket('ws://localhost:8000/ws/chat');
 
     socket.current.onopen = () => console.log("✅ Connected to AI Backend");
-    
+
     socket.current.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        
-        // Standard streaming pattern: backend sends { "type": "token", "content": "Hello" }
+
+        // Standard streaming pattern: backend sends { "type": "token", "token": "Hello", "done": false }
         if (data.type === 'token') {
-          updateLastAiMessage(data.content);
-        } 
-        
-        // Backend sends { "type": "end" } when the sentence is finished
+          if (data.token) {
+            updateLastAiMessage(data.token);
+          }
+          if (data.done === true) {
+            setIsTyping(false);
+          }
+        }
+
+        // Keep fallback support if the backend was sending "end"
         if (data.type === 'end') {
           setIsTyping(false);
         }
@@ -93,7 +98,7 @@ function App() {
   const updateLastAiMessage = (token) => {
     setMessages((prev) => {
       const lastMsg = prev[prev.length - 1];
-      
+
       // Check if the last message is from the AI
       if (lastMsg && lastMsg.role === 'ai') {
         // Create a copy of the message list
@@ -127,9 +132,9 @@ function App() {
     } else {
       // --- LIVE MODE (Websocket) ---
       if (socket.current && socket.current.readyState === WebSocket.OPEN) {
-        socket.current.send(JSON.stringify({ 
-          message: currentInput, 
-          session_id: currentChatId || "new_session" 
+        socket.current.send(JSON.stringify({
+          message: currentInput,
+          session_id: currentChatId || "new_session"
         }));
       } else {
         // Failure Handling (Requirement 6)
@@ -163,10 +168,10 @@ function App() {
       const newId = Date.now();
       setChatHistory(prev => [{ id: newId, title: chatTitle, data: messages }, ...prev]);
     }
-    
+
     // Reset with greeting
     setMessages([{ role: 'ai', content: "Hello! A new session has started. How can I help?" }]);
-    setCurrentChatId(null); 
+    setCurrentChatId(null);
     setIsTyping(false);
   };
 
@@ -179,11 +184,11 @@ function App() {
       const chatTitle = messages.find(m => m.role === 'user')?.content.substring(0, 20) || "Old Chat";
       const newId = Date.now();
       setChatHistory(prev => [{ id: newId, title: chatTitle, data: messages }, ...prev]);
-    } 
-    
+    }
+
     // 3. If we were on an EXISTING chat, update its data in history (in case new messages were added)
     else if (currentChatId !== null) {
-      setChatHistory(prev => prev.map(chat => 
+      setChatHistory(prev => prev.map(chat =>
         chat.id === currentChatId ? { ...chat, data: messages } : chat
       ));
     }
@@ -193,73 +198,73 @@ function App() {
     setCurrentChatId(selectedChat.id);
     setIsTyping(false);
   };
-  
+
   return (
-  <div className="app-container">
-    {/* Background Shapes */}
-    <div className="bg-decoration">
-      <div className="shape circle s1"></div>
-      <div className="shape circle s2"></div>
-      <div className="shape bug b1"></div>
-      <div className="shape bug b2"></div>
-    </div>
-
-    <aside className="sidebar">
-      <button className="new-chat-btn" onClick={resetChat}>+ New Chat \⁠(⁠๑⁠╹⁠◡⁠╹⁠๑⁠)⁠ﾉ</button>
-      <div className="history-list">
-        <p className="history-label">Recent Chats (⁠・⁠–⁠・⁠;⁠)⁠ゞ</p>
-        {chatHistory.map((chat, index) => (
-          <div 
-            key={chat.id} 
-            className={`history-item ${currentChatId === chat.id ? 'active' : ''}`}
-            onClick={() => handleSwitchChat(chat)}
-          >
-            {chat.title}...
-          </div>
-        ))}
+    <div className="app-container">
+      {/* Background Shapes */}
+      <div className="bg-decoration">
+        <div className="shape circle s1"></div>
+        <div className="shape circle s2"></div>
+        <div className="shape bug b1"></div>
+        <div className="shape bug b2"></div>
       </div>
-    </aside>
 
-    <main className="chat-main">
-      <header className="chat-header">
-        <span>Customer Service ヾ⁠(⁠･⁠ω⁠･⁠*⁠)⁠ﾉ</span>
-      </header>
-      
-     <div className="message-list">
-      {messages.map((msg, index) => (
-        <div key={index} className={`message-row ${msg.role}`}>
-          <div className="avatar">
-            {msg.role === 'user' ? '(⁠╹⁠▽⁠╹⁠⁠)' : '(⁠≧⁠▽⁠≦⁠)'} 
+      <aside className="sidebar">
+        <button className="new-chat-btn" onClick={resetChat}>+ New Chat \⁠(⁠๑⁠╹⁠◡⁠╹⁠๑⁠)⁠ﾉ</button>
+        <div className="history-list">
+          <p className="history-label">Recent Chats (⁠・⁠–⁠・⁠;⁠)⁠ゞ</p>
+          {chatHistory.map((chat, index) => (
+            <div
+              key={chat.id}
+              className={`history-item ${currentChatId === chat.id ? 'active' : ''}`}
+              onClick={() => handleSwitchChat(chat)}
+            >
+              {chat.title}...
+            </div>
+          ))}
+        </div>
+      </aside>
+
+      <main className="chat-main">
+        <header className="chat-header">
+          <span>Customer Service ヾ⁠(⁠･⁠ω⁠･⁠*⁠)⁠ﾉ</span>
+        </header>
+
+        <div className="message-list">
+          {messages.map((msg, index) => (
+            <div key={index} className={`message-row ${msg.role}`}>
+              <div className="avatar">
+                {msg.role === 'user' ? '(⁠╹⁠▽⁠╹⁠⁠)' : '(⁠≧⁠▽⁠≦⁠)'}
+              </div>
+              <div className="message-content">{msg.content}</div>
+            </div>
+          ))}
+
+          {isTyping && (
+            <div className="typing-indicator">
+              <div className="dot"></div>
+              <div className="dot"></div>
+              <div className="dot"></div>
+              <span>us ko sochne do... (⁠･⁠o⁠･⁠;⁠)</span>
+            </div>
+          )}
+          <div ref={scrollRef} />
+        </div>
+
+        <div className="input-area">
+          <div className="input-container">
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+              placeholder="Type a message..."
+            />
+            <button onClick={handleSend}>Send</button>
           </div>
-          <div className="message-content">{msg.content}</div>
         </div>
-      ))}
-      
-      {isTyping && (
-        <div className="typing-indicator">
-          <div className="dot"></div>
-          <div className="dot"></div>
-          <div className="dot"></div>
-          <span>us ko sochne do... (⁠･⁠o⁠･⁠;⁠)</span>
-        </div>
-      )}
-      <div ref={scrollRef} />
+      </main>
     </div>
-
-      <div className="input-area">
-        <div className="input-container">
-          <input 
-            value={input} 
-            onChange={(e) => setInput(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-            placeholder="Type a message..." 
-          />
-          <button onClick={handleSend}>Send</button>
-        </div>
-      </div>
-    </main>
-  </div>
-);
+  );
 }
 
 export default App;

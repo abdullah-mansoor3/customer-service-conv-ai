@@ -3,7 +3,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 
-from app.store import SessionCreatedResponse, SessionDetail, SessionSummary, sessions
+from app.store import DEFAULT_STATE, SessionCreatedResponse, SessionDetail, SessionSummary, sessions
 
 router = APIRouter(prefix="/api/sessions")
 
@@ -13,7 +13,11 @@ async def create_session():
     """Create a new empty chat session and return its ID."""
     session_id = str(uuid.uuid4())
     now = datetime.utcnow().isoformat()
-    sessions[session_id] = {"created_at": now, "messages": []}
+    sessions[session_id] = {
+        "created_at": now,
+        "messages": [],
+        "state": {**DEFAULT_STATE},
+    }
     return SessionCreatedResponse(session_id=session_id, created_at=now)
 
 

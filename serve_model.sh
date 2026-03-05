@@ -36,23 +36,34 @@ if ! command_exists "$LLAMA_SERVER"; then
 fi
 
 # Detect number of physical cores for efficient CPU inference
-OS="$(uname -s)"
-if [ "$OS" = "Linux" ]; then
-    # Get physical cores on Linux to avoid hyperthreading contention
-    THREADS=$(lscpu -p | grep -v '^#' | sort -u -t, -k 2,4 | wc -l)
-elif [[ "$OS" == "MINGW"* ]] || [[ "$OS" == "MSYS"* ]] || [[ "$OS" == "CYGWIN"* ]]; then
-    # Windows native or via bash
-    THREADS=$NUMBER_OF_PROCESSORS
+if [ -n "$LLAMA_THREADS" ]; then
+    THREADS=$LLAMA_THREADS
+    echo "Using LLAMA_THREADS=$THREADS from .env settings."
 else
-    THREADS=4 # Fallback
+    OS="$(uname -s)"
+    if [ "$OS" = "Linux" ]; then
+        # Get physical cores on Linux to avoid hyperthreading contention
+        THREADS=$(lscpu -p | grep -v '^#' | sort -u -t, -k 2,4 | wc -l)
+    elif [[ "$OS" == "MINGW"* ]] || [[ "$OS" == "MSYS"* ]] || [[ "$OS" == "CYGWIN"* ]]; then
+        # Windows native or via bash
+        THREADS=$NUMBER_OF_PROCESSORS
+    else
+        THREADS=4 # Fallback
+    fi
+
+    # Ensure THREADS is a valid number, fallback to 4 if detection fails
+    if ! [[ "$THREADS" =~ ^[0-9]+$ ]]; then
+        THREADS=4
+    fi
+    echo "Detected $THREADS physical CPU cores. Using this for inference threads."
 fi
 
-# Ensure THREADS is a valid number, fallback to 4 if detection fails
-if ! [[ "$THREADS" =~ ^[0-9]+$ ]]; then
-    THREADS=4
+if [ -n "$LLAMA_BATCH_THREADS" ]; then
+    BATCH_THREADS=$LLAMA_BATCH_THREADS
+    echo "Using LLAMA_BATCH_THREADS=$BATCH_THREADS for prompt evaluation."
+else
+    BATCH_THREADS=$THREADS
 fi
-
-echo "Detected $THREADS physical CPU cores. Using this for inference threads."
 
 # Dynamically infer the chat template based on the model filename
 MODEL_BASENAME=$(basename "$MODEL_PATH" | tr '[:upper:]' '[:lower:]')
@@ -93,7 +104,7 @@ esac
 # -b: Batch size for prompt processing
 # --mlock: Force system to keep model in RAM (optional, uncomment if you have enough RAM and want to avoid swapping)
 
-CMD="$LLAMA_SERVER -m \"$MODEL_PATH\" -c 2048 -t $THREADS -tb $THREADS -b 512"
+CMD="$LLAMA_SERVER -m \"$MODEL_PATH\" -c 2048 -t $THREADS -tb $BATCH_THREADS -b 512"
 
 if [ -n "$CHAT_TEMPLATE" ]; then
     echo "Detected template heuristics. Forcing chat template: $CHAT_TEMPLATE"

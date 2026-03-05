@@ -4,7 +4,7 @@ Customer Service Conversational AI — Backend entry point.
 Registers all routers and middleware. Logic lives in:
     app/routers/health.py    — GET /api/health
     app/routers/sessions.py  — POST/GET/DELETE /api/sessions/…
-    app/routers/chat.py      — WS /ws/chat/{session_id}
+    app/routers/chat.py      — WS /ws/chat
     app/store.py             — in-memory session store + Pydantic models
     app/config.py            — env vars (LLAMA_SERVER_URL, SYSTEM_PROMPT)
 """
