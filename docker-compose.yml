@@ -2,19 +2,61 @@ version: "3.9"
 
 # ── Services ──────────────────────────────────────────────────────────────
 #
-#  backend      – FastAPI server (REST + WebSocket)  → http://localhost:8000
-#  frontend     – Web UI                             → http://localhost:3000
 #  llama-server – llama.cpp inference server         → http://localhost:8080
-#                 (see comment block near the bottom — run it on the host or
-#                  uncomment the service entry once the LLM team sets it up)
+#  backend      – FastAPI server (REST + WebSocket)  → http://localhost:8000
+#  frontend     – React UI served by Nginx           → http://localhost:3000
+#
+# Prerequisites:
+#   1. Copy .env.example to .env and set MODEL_PATH to your .gguf file path
+#      inside the container (e.g. /models/your-model.gguf).
+#   2. Place the .gguf model file inside the ./models/ directory.
 #
 # Quick start:
 #   docker compose up --build
 #   docker compose up --build backend    # backend only
 #   docker compose logs -f backend       # follow logs
+#   docker compose logs -f llama-server  # watch model loading progress
 # ──────────────────────────────────────────────────────────────────────────
 
 services:
+
+  # ── LLM inference server (llama.cpp) ─────────────────────────────────────
+  # Uses the official pre-built CPU image from the llama.cpp project.
+  # Place your .gguf model file in ./models/ and set MODEL_PATH in .env.
+  #
+  # For GPU (CUDA) support swap the image tag:
+  #   image: ghcr.io/ggerganov/llama.cpp:server-cuda
+  # and add:
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  llama-server:
+    image: ghcr.io/ggerganov/llama.cpp:server
+    container_name: conv-ai-llama
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./models:/models:ro      # mount your .gguf files here (read-only)
+    command: >-
+      --model ${MODEL_PATH:-/models/model.gguf}
+      --host 0.0.0.0
+      --port 8080
+      --ctx-size ${CTX_SIZE:-2048}
+      --threads ${LLAMA_THREADS:-4}
+      --batch-size 512
+    restart: unless-stopped
+    networks:
+      - conv-ai-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s   # large models can take 1-2 min to load on CPU
 
   # ── Backend ──────────────────────────────────────────────────────────────
   backend:
@@ -24,23 +66,33 @@ services:
     container_name: conv-ai-backend
     ports:
       - "8000:8000"
+    environment:
+      # Point the backend at the llama-server container (internal Docker network)
+      - LLAMA_SERVER_URL=http://llama-server:8080
+      # Override the system prompt here if needed, or set it in .env
+      - SYSTEM_PROMPT=${SYSTEM_PROMPT:-You are a helpful customer service assistant. Be concise and friendly.}
+      - MAX_HISTORY=${MAX_HISTORY:-10}
     env_file:
       - .env
-    # Volume mount for hot-reload during development.
-    # Remove in production.
+    depends_on:
+      llama-server:
+        condition: service_started   # start as soon as the container is up; backend retries internally
+    # Volume mount for hot-reload during development — remove in production
     volumes:
       - ./backend/app:/app/app
     restart: unless-stopped
     networks:
       - conv-ai-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
   # ── Frontend ──────────────────────────────────────────────────────────────
+  # Multi-stage build: Node 20 compiles the React/Vite app, Nginx serves it.
+  # Nginx also proxies /ws/* WebSocket requests to the backend.
   frontend:
     build:
       context: ./frontend
@@ -49,32 +101,11 @@ services:
     ports:
       - "3000:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_started
     restart: unless-stopped
     networks:
       - conv-ai-net
-
-  # ── llama-server (LLM Team) ───────────────────────────────────────────────
-  # Uncomment once the LLM team has a Docker image or build context ready.
-  # The backend expects this service at http://llama-server:8080.
-  # Also change LLAMA_SERVER_URL in the backend service above to:
-  #   http://llama-server:8080
-  #
-  # llama-server:
-  #   image: ghcr.io/ggerganov/llama.cpp:server   # official pre-built image
-  #   container_name: conv-ai-llama
-  #   ports:
-  #     - "8080:8080"
-  #   volumes:
-  #     - ./models:/models:ro      # mount your .gguf files here
-  #   command: >
-  #     -m /models/model.gguf
-  #     --host 0.0.0.0
-  #     --port 8080
-  #     --ctx-size 2048
-  #   restart: unless-stopped
-  #   networks:
-  #     - conv-ai-net
 
 # ── Networks ──────────────────────────────────────────────────────────────
 networks:
