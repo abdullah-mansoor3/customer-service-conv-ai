@@ -80,8 +80,17 @@ case "$MODEL_BASENAME" in
     *phi-3*|*phi3*)
         CHAT_TEMPLATE="phi3"
         ;;
-    *chatml*|*wizard*|*zephyr*|*qwen*)
-        # Many models use ChatML format (WizardLM, Qwen, Zephyr, Dolphin)
+    *chatml*|*wizard*|*zephyr*)
+        # Many models use ChatML format (WizardLM, Zephyr, Dolphin)
+        CHAT_TEMPLATE="chatml"
+        ;;
+    *qwen3*)
+        # Qwen3 has its own embedded chat template with thinking/non-thinking
+        # mode support. Let llama-server read it from the GGUF metadata.
+        CHAT_TEMPLATE=""
+        ;;
+    *qwen*)
+        # Older Qwen models (Qwen1, Qwen2, Qwen2.5) use ChatML format
         CHAT_TEMPLATE="chatml"
         ;;
     *mistral*|*mixtral*)

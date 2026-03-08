@@ -80,15 +80,23 @@ async def websocket_chat(websocket: WebSocket):
             state_str = json.dumps(sessions[session_id]["state"])
             system_prompt = (
                 f"{DEFAULT_SYSTEM_PROMPT}\n\n"
-                "Track the user's issue state as JSON. "
-                "Always reply in EXACTLY this format — the STATE JSON "
-                "block on its own line, then a newline, then your "
-                "short reply:\n"
-                "<STATE>{\"router_model\": null, \"lights_status\": null, "
-                "\"error_message\": null, \"connection_type\": null, "
-                "\"has_restarted\": null}</STATE>\n"
-                "Your short reply here.\n\n"
-                f"CURRENT KNOWN STATE:\n{state_str}"
+                "/no_think\n\n"
+                "You MUST begin EVERY response with a <STATE> JSON block "
+                "that tracks what you know so far, then a newline, then "
+                "your short reply (1-2 sentences max).\n\n"
+                "The STATE JSON has exactly these 5 keys:\n"
+                '  router_model, lights_status, error_message, '
+                'connection_type, has_restarted\n'
+                'Use null for anything the user has NOT mentioned yet. '
+                'Only fill a field when the user explicitly states it.\n\n'
+                "=== FORMAT EXAMPLE (not real data, ignore these values) ===\n"
+                'If a user said their BrandX router has green lights:\n'
+                '<STATE>{"router_model": "BrandX", "lights_status": "green", '
+                '"error_message": null, "connection_type": null, '
+                '"has_restarted": null}</STATE>\n'
+                "I see your BrandX has green lights. What error are you getting?\n"
+                "=== END FORMAT EXAMPLE ===\n\n"
+                f"CURRENT KNOWN STATE (carry forward and update):\n{state_str}"
             )
 
             messages = [{"role": "system", "content": system_prompt}]
@@ -97,14 +105,18 @@ async def websocket_chat(websocket: WebSocket):
 
             payload = {
                 "messages": messages,
-                "temperature": 0.3,
+                "temperature": 0.7,
+                "top_p": 0.8,
+                "top_k": 20,
                 "max_tokens": -1,
                 "stream": True,
             }
 
             # ── Stream from llama-server ───────────────────────────────
             full_response = ""
-            is_state_block = True
+            is_think_block = True      # Qwen3: strip <think>…</think>
+            think_buffer = ""
+            is_state_block = False     # activated after think block ends
             state_buffer = ""
             user_response = ""
 
@@ -148,7 +160,48 @@ async def websocket_chat(websocket: WebSocket):
 
                                 full_response += token
 
-                                # ── Intercept <STATE>{…}</STATE> block ─
+                                # ── Phase 1: Strip <think>…</think> ────
+                                # Qwen3 may emit a thinking block before
+                                # the actual reply even in /no_think mode
+                                # (it will be empty, but we must skip it).
+                                if is_think_block:
+                                    think_buffer += token
+
+                                    if "</think>" in think_buffer:
+                                        # Think block complete — discard it
+                                        # and pass the remainder onward
+                                        _, after_think = think_buffer.split(
+                                            "</think>", 1
+                                        )
+                                        is_think_block = False
+                                        is_state_block = True
+                                        state_buffer = after_think.lstrip("\n")
+                                        continue
+
+                                    elif (
+                                        len(think_buffer) > 20
+                                        and "<think>" not in think_buffer
+                                        and "<" not in think_buffer[-1:]
+                                    ):
+                                        # No <think> tag — model skipped
+                                        # thinking entirely. Move to STATE
+                                        # phase with the full buffer.
+                                        is_think_block = False
+                                        is_state_block = True
+                                        state_buffer = think_buffer
+                                        continue
+
+                                    elif len(think_buffer) > 2000:
+                                        # Safety: huge think block — flush
+                                        is_think_block = False
+                                        is_state_block = True
+                                        state_buffer = ""
+                                        continue
+
+                                    # Still accumulating — wait for more
+                                    continue
+
+                                # ── Phase 2: Intercept <STATE>{…}</STATE>
                                 # The model is asked to start every reply
                                 # with <STATE>{"key":…}</STATE> followed
                                 # by the human-readable text.  We buffer
@@ -223,7 +276,16 @@ async def websocket_chat(websocket: WebSocket):
 
                     # If stream ended while we were still buffering,
                     # flush whatever we have
-                    if is_state_block and state_buffer:
+                    if is_think_block and think_buffer:
+                        # Stream ended inside a think block — strip tags
+                        clean = (
+                            think_buffer.replace("<think>", "")
+                            .replace("</think>", "")
+                            .replace("<STATE>", "")
+                            .replace("</STATE>", "")
+                        )
+                        await _send_token(clean.lstrip("\n"))
+                    elif is_state_block and state_buffer:
                         clean = (
                             state_buffer.replace("<STATE>", "")
                             .replace("</STATE>", "")
