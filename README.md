@@ -1,272 +1,559 @@
 # Customer Service Conversational AI
 
-A locally-running conversational AI system for ISP technical support.  
-The backend streams tokens from a **llama.cpp** inference server to the browser over WebSocket.
+A fully local, streaming conversational AI system for ISP (Internet Service Provider) technical support.  
+No cloud APIs, no data ever leaves your machine. Models run on CPU or GPU via **llama.cpp**.
+
+---
+
+## Table of Contents
+
+1. [What the Project Does](#1-what-the-project-does)
+2. [Architecture Overview](#2-architecture-overview)
+3. [How Communication Works](#3-how-communication-works)
+4. [The LLM Layer](#4-the-llm-layer)
+5. [Conversation & Session Management](#5-conversation--session-management)
+6. [Signal-to-Noise / State Tracking Logic](#6-signal-to-noise--state-tracking-logic)
+7. [Few-Shot Prompting](#7-few-shot-prompting)
+8. [Directory Structure](#8-directory-structure)
+9. [Backend API Reference](#9-backend-api-reference)
+10. [Configuration](#10-configuration)
+11. [Running with Docker (recommended)](#11-running-with-docker-recommended)
+12. [Running without Docker](#12-running-without-docker)
+13. [Tests](#13-tests)
+14. [Model Download — Qwen3.5-0.8B](#14-model-download--qwen350-8b)
+
+---
+
+## 1. What the Project Does
+
+The system is an **ISP tech-support chatbot** that:
+
+- Holds a real-time, streaming conversation with a user through a browser UI
+- Progressively extracts structured facts from the free-form conversation (router model, connection type, error message, etc.)
+- Uses those facts to stay on-topic and ask the right follow-up questions — even for small models that struggle with long context
+- Runs entirely locally: no subscription, no API key, no cloud
+
+The default use-case is diagnosing internet connectivity problems, but the tracked state fields and system prompt are fully configurable via environment variables.
+
+---
+
+## 2. Architecture Overview
+
+Three services communicate over a private Docker network:
 
 ```
-Browser
-  │
-  ├─ HTTP GET → :3000 ─────► Nginx (frontend)  serves React build
-  │                                │  proxies /ws/* → backend:8000
-  │
-  └─ WebSocket ws://:8000 ────────► FastAPI Backend  session store + prompt logic
-                                          │
-                                          └──► llama-server:8080  LLM inference (llama.cpp)
+Browser (React)
+   │
+   │  HTTP GET /  → serves the React app
+   ├──────────────────────────────► Nginx : 3000
+   │                                  │  /ws/* proxied to backend
+   │                                  │
+   │  WebSocket ws://localhost:8000/ws/chat
+   └──────────────────────────────► FastAPI Backend : 8000
+                                       │
+                                       │  HTTP POST /v1/chat/completions
+                                       │  (OpenAI-compatible, SSE stream)
+                                       └────────────────────────────────► llama-server : 8080
+                                                                              │
+                                                                              └── loads model.gguf
+```
+
+| Service | Technology | Port | Responsibility |
+|---|---|---|---|
+| `llama-server` | llama.cpp (official Docker image) | 8080 | LLM inference — OpenAI-compatible REST, streams tokens as Server-Sent Events |
+| `backend` | Python / FastAPI | 8000 | Session store, prompt construction, state extraction, token relay over WebSocket |
+| `frontend` | React 19 + Vite, served by Nginx | 3000 | Chat UI, WebSocket client, streaming token render |
+
+---
+
+## 3. How Communication Works
+
+### Browser ↔ Backend (WebSocket)
+
+The frontend opens a single, persistent WebSocket connection to `ws://localhost:8000/ws/chat`.
+
+Every time the user sends a message the browser sends one JSON frame:
+
+```json
+{"message": "My TP-Link router keeps disconnecting.", "session_id": "optional-uuid"}
+```
+
+The backend responds with a stream of token frames followed by a final done frame:
+
+```json
+{"type": "session_id", "session_id": "abc-123"}      ← sent once per turn, carries the session UUID
+{"type": "token",      "token": "I",    "done": false}
+{"type": "token",      "token": " see", "done": false}
+{"type": "token",      "token": "",     "done": true}  ← signals end of turn
+```
+
+On any error (bad JSON, missing fields, LLM server down) the backend sends:
+
+```json
+{"type": "error", "error": "Could not connect to the LLM server."}
+```
+
+The connection stays open after an error so the user can retry without a page reload.
+
+Nginx proxies the WebSocket path from port 3000 to port 8000, keeping the browser pointed at a single origin.
+
+### Backend ↔ llama-server (HTTP SSE Streaming)
+
+For each user turn the backend makes an HTTP POST to `llama-server`'s OpenAI-compatible endpoint:
+
+```
+POST http://llama-server:8080/v1/chat/completions
+Content-Type: application/json
+
+{
+  "messages": [...],
+  "temperature": 0.3,
+  "max_tokens": -1,
+  "stream": true
+}
+```
+
+With `stream: true` llama-server responds with a sequence of Server-Sent Event lines:
+
+```
+data: {"choices":[{"delta":{"content":"I "},"finish_reason":null}]}
+data: {"choices":[{"delta":{"content":"see "},"finish_reason":null}]}
+data: [DONE]
+```
+
+The backend reads these with `httpx`'s async streaming client, extracts the `content` delta from each line, and relays each token over the WebSocket to the browser as it arrives — achieving true word-by-word streaming in the UI.
+
+---
+
+## 4. The LLM Layer
+
+### llama.cpp
+
+[llama.cpp](https://github.com/ggerganov/llama.cpp) is a C++ inference engine that runs transformer models on CPU (and optionally GPU) using quantized GGUF weight files. The official Docker image `ghcr.io/ggerganov/llama.cpp:server` exposes an OpenAI-compatible HTTP server.
+
+Key advantages for this project:
+- Runs on any hardware — no GPU required
+- GGUF quantization (Q4, Q8, etc.) drastically shrinks model size while preserving most quality
+- Streams tokens as they are generated, so the UI feels responsive
+
+### Recommended Model — Qwen3.5-0.8B
+
+The project is configured to use **Qwen/Qwen3.5-0.8B** (quantized GGUF). At only ~500 MB it loads instantly and runs on CPU fast enough for real conversation.
+
+The `serve_model.sh` script automatically detects the model filename and applies the correct chat template (`chatml` for Qwen models) so the model formats its replies as expected.
+
+### Temperature & Context
+
+| Parameter | Value | Reason |
+|---|---|---|
+| `temperature` | 0.3 | Low randomness — support agents should be factual and consistent |
+| `max_tokens` | -1 | No artificial truncation; the model decides when it's done |
+| `ctx_size` | 2048 | Safe default for 0.8B models on CPU |
+
+---
+
+## 5. Conversation & Session Management
+
+### Sessions
+
+Every browser tab or conversation is tracked as a **session**. A session is a plain Python dict:
+
+```python
+sessions[session_id] = {
+    "created_at": "2026-01-01T10:00:00",
+    "messages":   [{"role": "user"|"assistant", "content": "..."}, ...],
+    "state":      {"router_model": None, "lights_status": None, ...}
+}
+```
+
+Sessions live in memory (`app/store.py`). They are lost on server restart, which is acceptable for this assignment. To add persistence, replace the in-memory dict with Redis.
+
+### History Window
+
+Only the **last N messages** (default `MAX_HISTORY=10`) are sent to the LLM per turn. This caps the prompt size regardless of conversation length, preventing context-window overflow on small models. The full history is always stored in memory for session restore.
+
+### REST API for session management
+
+The frontend (and tests) can create, list, inspect, and delete sessions over HTTP — independent of the WebSocket. This cleanly separates session lifecycle from the chat stream:
+
+```
+POST   /api/sessions          → create session → {session_id, created_at}
+GET    /api/sessions          → list all sessions
+GET    /api/sessions/{id}     → full message history
+DELETE /api/sessions/{id}     → end / clear session
 ```
 
 ---
 
-## Directory Structure
+## 6. Signal-to-Noise / State Tracking Logic
+
+This is the core technique that makes small models (≤1B parameters) work reliably for structured support tasks.
+
+### The Problem
+
+Small LLMs have limited working memory. With a growing chat history their attention spreads thin and they start forgetting facts the user mentioned three messages ago ("what router did you say you had?").
+
+### The Solution — Extracted State + System Prompt Injection
+
+The LLM is instructed to **emit a structured JSON block at the start of every reply**:
+
+```
+<STATE>{"router_model": "TP-Link", "lights_status": null, "error_message": "disconnects", "connection_type": "wifi", "has_restarted": null}</STATE>
+I see — a TP-Link on wifi that keeps disconnecting. Have you tried restarting it yet?
+```
+
+The backend intercepts this block **before forwarding any tokens to the browser**:
+
+1. The `<STATE>{…}</STATE>` block is parsed with regex + `json.loads`
+2. Non-null values are merged into `session["state"]` (null values never overwrite existing facts)
+3. The block is stripped — the user never sees it
+4. On the **next turn**, the accumulated state is injected into the system prompt:
+
+```
+CURRENT KNOWN STATE:
+{"router_model": "TP-Link", "lights_status": null, "error_message": "disconnects", "connection_type": "wifi", "has_restarted": null}
+```
+
+### Why This Works
+
+Instead of asking the model to recall facts from a growing, noisy conversation history, we give it a **compact, always-current summary** alongside the last few messages. The model only needs to:
+
+1. Update the state with any new facts in the latest user message
+2. Use the state to formulate the next useful question
+
+This is a form of **explicit working memory** — the information is always present at the front of the context rather than buried in history.
+
+### State Fields
+
+| Field | Tracks |
+|---|---|
+| `router_model` | Brand/model of the user's router |
+| `lights_status` | What the router indicator lights look like |
+| `error_message` | The on-screen error the user sees |
+| `connection_type` | `"wifi"` or `"wired"` |
+| `has_restarted` | Whether the user has already restarted the router |
+
+Add more fields by editing `DEFAULT_STATE` in `app/store.py` and updating the system prompt in `app/config.py`.
+
+---
+
+## 7. Few-Shot Prompting
+
+Small models often struggle to follow a multi-part format instruction (produce structured JSON *and* a conversational reply) from a system prompt alone.
+
+To fix this, two synthetic conversation turns are **prepended to every request** after the system prompt, immediately before the real history:
+
+```
+User:      "Hi, I need help with my internet."
+Assistant: "<STATE>{...all null...}</STATE>\nHello! What router model are you using?"
+
+User:      "I have a TP-Link and it keeps disconnecting on wifi."
+Assistant: "<STATE>{...router_model: TP-Link, connection_type: wifi...}</STATE>\nHave you tried restarting the router yet?"
+```
+
+These are fake turns the model never actually generated — they demonstrate the exact output format by example. The model sees the pattern twice before generating its first real reply, which dramatically increases format compliance without any fine-tuning.
+
+These turns are defined in `FEW_SHOT_EXAMPLES` inside `app/config.py` and are never stored in the session history or shown to the user.
+
+---
+
+## 8. Directory Structure
 
 ```
 customer-service-conv-ai/
 │
 ├── backend/
 │   ├── app/
-│   │   ├── main.py               # FastAPI app factory — registers routers + CORS
-│   │   ├── config.py             # Env vars: LLAMA_SERVER_URL, SYSTEM_PROMPT, MAX_HISTORY
-│   │   ├── store.py              # In-memory sessions dict + Pydantic models
+│   │   ├── main.py           # FastAPI app factory — registers routers + CORS
+│   │   ├── config.py         # Env vars: LLAMA_SERVER_URL, SYSTEM_PROMPT,
+│   │   │                     #   MAX_HISTORY, FEW_SHOT_EXAMPLES
+│   │   ├── store.py          # In-memory sessions dict + Pydantic response models
 │   │   └── routers/
-│   │       ├── health.py         # GET /api/health
-│   │       ├── sessions.py       # POST/GET/DELETE /api/sessions/…
-│   │       └── chat.py           # WS /ws/chat  (streaming, state-tracking)
-│   ├── requirements.txt          # fastapi, uvicorn, httpx, pydantic
-│   ├── run_tests.py
-│   └── Dockerfile                # python:3.11-slim single-stage image
+│   │       ├── health.py     # GET /api/health
+│   │       ├── sessions.py   # POST/GET/DELETE /api/sessions/…
+│   │       └── chat.py       # WS /ws/chat — streaming, state extraction
+│   ├── tests/
+│   │   ├── __init__.py
+│   │   └── test_endpoints.py # Pytest unit tests for all endpoints
+│   ├── requirements.txt
+│   ├── run_tests.py          # Manual WebSocket integration smoke-tests
+│   └── Dockerfile
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── App.jsx               # React chat UI — WebSocket client + streaming render
+│   │   ├── App.jsx           # React chat UI — WebSocket client, token streaming
 │   │   └── App.css
-│   ├── nginx.conf                # Nginx config — serves static files + proxies /ws/
-│   ├── package.json              # React 19 + Vite 7
-│   └── Dockerfile                # Multi-stage: Node 20 build → Nginx serve
+│   ├── nginx.conf            # Serves static files + proxies /ws/ to backend
+│   ├── package.json
+│   ├── vite.config.js
+│   └── Dockerfile            # Multi-stage: Node 20 build → Nginx serve
 │
-├── models/                       # ← put your .gguf file here (git-ignored)
+├── models/                   # ← place your .gguf file here (git-ignored)
 │
-├── docker-compose.yml            # Orchestrates all three services
-├── .env.example                  # Template — copy to .env before running
-├── serve_model.sh                # Run llama-server on the host (outside Docker)
-├── check_llama.sh                # Install / verify llama.cpp on the host
+├── docker-compose.yml        # Orchestrates all three services
+├── .env.example              # Template — copy to .env
+├── serve_model.sh            # Run llama-server directly on the host (no Docker)
+├── check_llama.sh            # Verify / install llama.cpp on the host
 └── README.md
 ```
 
 ---
 
-## Services
-
-| Service | Image / Build | Port | Role |
-|---------|--------------|------|------|
-| `llama-server` | `ghcr.io/ggerganov/llama.cpp:server` | 8080 | LLM inference; OpenAI-compatible `/v1/chat/completions` with SSE streaming |
-| `backend` | `./backend/Dockerfile` | 8000 | FastAPI — REST API + WebSocket; manages sessions, streams tokens |
-| `frontend` | `./frontend/Dockerfile` | 3000 | React UI built with Vite, served by Nginx |
-
----
-
-## Backend API Reference
+## 9. Backend API Reference
 
 ### REST Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/health` | Liveness check — returns configured `llama_server` URL |
-| `POST` | `/api/sessions` | Create a new chat session → `{"session_id": "...", "created_at": "..."}` |
-| `GET` | `/api/sessions` | List all active sessions |
-| `GET` | `/api/sessions/{session_id}` | Full message history for a session |
-| `DELETE` | `/api/sessions/{session_id}` | Delete session and its history |
+| Method | Path | Status | Description |
+|---|---|---|---|
+| `GET` | `/api/health` | 200 | Liveness check — returns `{"status":"ok","llama_server":"..."}` |
+| `POST` | `/api/sessions` | 201 | Create session → `{"session_id":"...","created_at":"..."}` |
+| `GET` | `/api/sessions` | 200 | List all active sessions with message counts |
+| `GET` | `/api/sessions/{id}` | 200 / 404 | Full message history for a session |
+| `DELETE` | `/api/sessions/{id}` | 200 / 404 | Delete session and its history |
 
-Interactive docs: **http://localhost:8000/docs**
+Interactive Swagger docs: **http://localhost:8000/docs**
 
 ### WebSocket — `WS /ws/chat`
 
-**Client → Server** (each turn):
+**Client → Server** (per turn):
 ```json
-{"message": "My internet keeps disconnecting.", "session_id": "optional-uuid"}
+{"message": "My router keeps disconnecting.", "session_id": "optional-uuid"}
 ```
+Omit `session_id` the first time — the server creates and returns one.
 
 **Server → Client** (token stream):
 ```json
-{"type": "token", "token": "I",      "done": false}
-{"type": "token", "token": " see",   "done": false}
-{"type": "token", "token": "",       "done": true}
+{"type": "session_id", "session_id": "abc-123"}
+{"type": "token", "token": "Let",  "done": false}
+{"type": "token", "token": " me",  "done": false}
+{"type": "token", "token": "",     "done": true}
 ```
 
 **Server → Client** (on error):
 ```json
-{"type": "error", "error": "Could not connect to the LLM server."}
+{"type": "error", "error": "Field 'message' is missing or empty."}
 ```
-
-If `session_id` is omitted or unknown, the backend auto-creates a new session.
-
-### State Tracking
-
-The LLM is prompted to emit a `<STATE>{…}</STATE>` JSON block at the start of every reply.  
-The backend intercepts it (never shown to the user), merges it into the session state dict, and reinjects the accumulated state into the system prompt on the next turn — keeping the model grounded without relying on long context alone.
-
-Default tracked fields: `router_model`, `lights_status`, `error_message`, `connection_type`, `has_restarted`.
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LLAMA_SERVER_URL` | `http://llama-server:8080` | URL of the running llama-server |
-| `SYSTEM_PROMPT` | `"You are a helpful customer service assistant..."` | System prompt for every conversation |
-| `MAX_HISTORY` | `10` | Conversation turns kept in the LLM context window |
 
 ---
 
-## Quick Start (Docker Compose — recommended)
+## 10. Configuration
+
+All settings are read from environment variables (or a `.env` file in the project root).
+
+| Variable | Default | Description |
+|---|---|---|
+| `MODEL_PATH` | `/models/model.gguf` | Path to the GGUF file **inside the container** |
+| `LLAMA_SERVER_URL` | `http://127.0.0.1:8080` | URL the backend uses to reach llama-server |
+| `SYSTEM_PROMPT` | `"You are a helpful customer service assistant..."` | Base system prompt for every session |
+| `MAX_HISTORY` | `10` | Max conversation turns sent to the LLM per request |
+| `CTX_SIZE` | `2048` | llama-server context window size (tokens) |
+| `LLAMA_THREADS` | auto-detected | CPU threads for token generation |
+| `LLAMA_BATCH_THREADS` | same as `LLAMA_THREADS` | CPU threads for prompt evaluation |
+
+Copy `.env.example` to `.env` and edit before running.
+
+---
+
+## 11. Running with Docker (recommended)
 
 ### Prerequisites
 
-- **Docker ≥ 24** with the Compose v2 plugin (`docker compose`)
-- A **GGUF model file** — download from Hugging Face, e.g.:
-  - [`mistral-7b-instruct-v0.2.Q4_K_M.gguf`](https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF) (~4 GB, good quality/speed on CPU)
-  - [`phi-2.Q4_K_M.gguf`](https://huggingface.co/TheBloke/phi-2-GGUF) (~1.5 GB, fast on CPU)
+- **Docker ≥ 24** with Compose v2 (`docker compose version`)
+- A GGUF model file in `./models/` (see [Section 14](#14-model-download--qwen350-8b))
 
-### 1. Clone
+### Step-by-step
 
 ```bash
+# 1. Clone the repo
 git clone <repo-url>
 cd customer-service-conv-ai
-```
 
-### 2. Add your model
-
-```bash
+# 2. Place your model
 mkdir -p models
-cp ~/Downloads/your-model.gguf models/
-```
+cp ~/Downloads/Qwen3.5-0.8B-Q4_K_M.gguf models/
 
-### 3. Configure environment variables
-
-```bash
+# 3. Configure environment
 cp .env.example .env
-```
+# Edit .env — set MODEL_PATH to the in-container path:
+#   MODEL_PATH=/models/Qwen3.5-0.8B-Q4_K_M.gguf
 
-Edit `.env` and set `MODEL_PATH` to the path **inside the container** (always `/models/<filename>`):
-
-```ini
-MODEL_PATH=/models/your-model.gguf
-```
-
-Optionally adjust `CTX_SIZE`, `LLAMA_THREADS`, or `SYSTEM_PROMPT`.
-
-### 4. Build and start all services
-
-```bash
+# 4. Build and start everything
 docker compose up --build
 ```
 
-> The llama-server takes **1–2 minutes** to load the model on the first run (especially on CPU).  
-> Watch progress: `docker compose logs -f llama-server`
+The first run downloads the llama-server Docker image (~600 MB) and builds the backend and frontend images. Subsequent starts are fast.
 
-| Service | URL |
-|---------|-----|
-| Frontend / Chat UI | http://localhost:3000 |
-| Backend REST API | http://localhost:8000 |
-| Swagger UI | http://localhost:8000/docs |
-| llama-server (raw) | http://localhost:8080 |
-
-### 5. Stop
+| URL | Service |
+|---|---|
+| http://localhost:3000 | Chat UI |
+| http://localhost:8000/docs | Backend Swagger |
+| http://localhost:8000/api/health | Health check |
+| http://localhost:8080/health | llama-server raw health |
 
 ```bash
-docker compose down
-```
+# Watch the model load (first boot takes ~30 sec for 0.8B)
+docker compose logs -f llama-server
 
----
+# Tail backend logs (shows state extraction output)
+docker compose logs -f backend
 
-## Useful Docker Commands
-
-```bash
-# Rebuild everything from scratch
-docker compose up --build
-
-# Start only the backend (useful for API development)
+# Start only the backend (useful while developing)
 docker compose up --build backend
 
-# Tail logs for a specific service
-docker compose logs -f llama-server
-docker compose logs -f backend
-docker compose logs -f frontend
-
-# Open a shell inside the backend container
-docker compose exec backend sh
-
-# Stop and remove containers (keeps images)
+# Stop all services
 docker compose down
 
-# Stop and remove containers + built images
-docker compose down --rmi local
+# Rebuild from scratch and remove old images
+docker compose down --rmi local && docker compose up --build
 ```
 
 ---
 
-## Local Development (without Docker)
+## 12. Running without Docker
 
-### llama-server on the host
+Use this if you want to run on bare metal, develop the backend, or avoid Docker overhead.
+
+### Prerequisites
+
+- Python 3.11+
+- Node.js 20+ (only for the frontend dev server)
+- `llama-server` installed on `$PATH` (run `./check_llama.sh` to verify or install)
+
+### Step-by-step
+
+#### 1. Start llama-server (the model)
 
 ```bash
-# 1. Check / install llama.cpp
-bash check_llama.sh
+# Copy and edit .env
+cp .env.example .env
+# Set MODEL_PATH to the absolute path on your machine, e.g.:
+#   MODEL_PATH=/home/you/models/Qwen3.5-0.8B-Q4_K_M.gguf
 
-# 2. Start the server (reads MODEL_PATH from .env)
-bash serve_model.sh
-
-# Or run directly:
-llama-server -m /path/to/model.gguf --host 0.0.0.0 --port 8080 --ctx-size 2048
+./serve_model.sh
 ```
 
-### Backend on the host
+`serve_model.sh` reads `.env`, detects your CPU core count, picks the right chat template for Qwen (`chatml`), and starts `llama-server` on port **8080**.
+
+#### 2. Start the backend
 
 ```bash
 cd backend
-python -m venv .venv && source .venv/bin/activate
+
+# Install dependencies (first time only)
 pip install -r requirements.txt
 
+# Run with hot-reload
 LLAMA_SERVER_URL=http://127.0.0.1:8080 uvicorn app.main:app --reload --port 8000
 ```
 
-### Frontend on the host
+Check it is up: http://localhost:8000/api/health
+
+#### 3. Start the frontend (optional)
 
 ```bash
 cd frontend
+
+# Install dependencies (first time only)
 npm install
-npm run dev     # Vite dev server → http://localhost:5173
+
+# Start Vite dev server
+npm run dev
 ```
 
-> When running outside Docker the React app connects directly to `ws://localhost:8000/ws/chat`,
-> so the backend must be running on port 8000 on the same machine.
+Open http://localhost:5173 (Vite default).  
+> The Vite dev server connects the WebSocket directly to `ws://localhost:8000/ws/chat`.  
+> No Nginx proxy is needed in development.
+
+#### All three processes together (split-terminal approach)
+
+```
+Terminal 1  →  ./serve_model.sh
+Terminal 2  →  cd backend  && uvicorn app.main:app --reload --port 8000
+Terminal 3  →  cd frontend && npm run dev
+```
 
 ---
 
-## GPU Support (optional)
+## 13. Tests
 
-To use an NVIDIA GPU, update the `llama-server` service in `docker-compose.yml`:
+### Unit Tests (pytest) — no running server needed
 
-```yaml
-llama-server:
-  image: ghcr.io/ggerganov/llama.cpp:server-cuda
-  deploy:
-    resources:
-      reservations:
-        devices:
-          - driver: nvidia
-            count: 1
-            capabilities: [gpu]
+The unit tests mock the LLM server with `unittest.mock` so they run instantly without Docker.
+
+```bash
+cd backend
+pip install -r requirements.txt   # includes pytest, pytest-asyncio
+
+pytest tests/test_endpoints.py -v
 ```
 
-Also add `--n-gpu-layers 99` to the `command:` block to offload all layers to the GPU.
+**Coverage:**
+
+| Test Class | Endpoint | What is tested |
+|---|---|---|
+| `TestHealth` | `GET /api/health` | 200 status, `status: ok`, `llama_server` field |
+| `TestCreateSession` | `POST /api/sessions` | 201 status, unique IDs, session stored, default state |
+| `TestListSessions` | `GET /api/sessions` | Empty list, correct count, field shapes, message count |
+| `TestGetSession` | `GET /api/sessions/{id}` | 200, 404, messages list, history content |
+| `TestDeleteSession` | `DELETE /api/sessions/{id}` | 200, 404, removal from store, subsequent GET is 404 |
+| `TestWebSocketChat` | `WS /ws/chat` | session_id frame, done frame, session creation, history persistence, **state extraction from `<STATE>` block**, null values do not overwrite existing facts, state block stripped from token stream, error on bad JSON, error on empty message, error on missing field, error when LLM server unreachable |
+
+### Integration / Smoke Tests (live server required)
+
+`run_tests.py` sends real WebSocket messages to a running backend and prints the AI responses. Requires the full stack to be up.
+
+```bash
+# With Docker
+docker compose up -d
+python backend/run_tests.py
+
+# Without Docker (all three processes running)
+python backend/run_tests.py
+```
+
+Test scenarios:
+1. **Remembrance** — mentions router model early, asks about it later
+2. **Pivot-back** — off-topic question; does the agent return to diagnosis?
+3. **End-of-state** — all 5 fields given in one message; check backend logs for state extraction
+4. **Identity integrity** — attempts to break character / expose system prompt
+5. **Multi-variable extraction** — verifies regex parsing in backend logs
 
 ---
 
-## Troubleshooting
+## 14. Model Download — Qwen3.5-0.8B
 
-| Symptom | Likely cause | Fix |
-|---------|-------------|-----|
-| `docker compose` not found | Old Docker | Upgrade to Docker ≥ 24 or use `docker-compose` |
-| llama-server exits immediately | Wrong `MODEL_PATH` | Path must be `/models/<filename>` matching a file in `./models/` |
-| llama-server still loading after 2 min | Large model + slow CPU | Use a smaller quantised model (Q4_K_M recommended) |
-| Backend errors `Connection refused` | Model not loaded yet | Wait — `docker compose logs -f llama-server` |
-| WebSocket fails in browser | Backend not running | Check `docker compose ps` and `docker compose logs backend` |
-| Frontend build fails (`npm ci`) | Missing `package-lock.json` | Run `npm install` inside `frontend/` to generate it, then rebuild |
+### Option A — Hugging Face website (no tools needed)
+
+1. Open **https://huggingface.co/bartowski/Qwen3.5-0.8B-GGUF/tree/main** in your browser
+2. Click the file you want:
+
+   | File | Size | Recommendation |
+   |---|---|---|
+   | `Qwen3.5-0.8B-Q4_K_M.gguf` | ~500 MB | Best balance of speed and quality ✅ |
+   | `Qwen3.5-0.8B-Q8_0.gguf` | ~900 MB | Highest quality, needs more RAM |
+
+3. Click the **download icon (↓)** on the right side of the file row
+4. Move the file into `models/`:
+
+```bash
+mv ~/Downloads/Qwen3.5-0.8B-Q4_K_M.gguf models/
+```
+
+### Option B — Hugging Face CLI
+
+```bash
+pip install huggingface_hub
+
+huggingface-cli download \
+  bartowski/Qwen3.5-0.8B-GGUF \
+  Qwen3.5-0.8B-Q4_K_M.gguf \
+  --local-dir ./models
+```
+
+### Set MODEL_PATH in `.env`
+
+```ini
+MODEL_PATH=/models/Qwen3.5-0.8B-Q4_K_M.gguf
+```
+
+> Use the exact filename you downloaded. The path is always `/models/<filename>` inside the container — the `./models/` folder on your host is mounted at `/models` in Docker.
