@@ -25,7 +25,7 @@ services:
   # Place your .gguf model file in ./models/ and set MODEL_PATH in .env.
   #
   # For GPU (CUDA) support swap the image tag:
-  #   image: ghcr.io/ggerganov/llama.cpp:server-cuda
+  #   image: ghcr.io/ggml-org/llama.cpp:server-cuda
   # and add:
   #   deploy:
   #     resources:
@@ -35,12 +35,12 @@ services:
   #             count: 1
   #             capabilities: [gpu]
   llama-server:
-    image: ghcr.io/ggerganov/llama.cpp:server
+    image: ghcr.io/ggml-org/llama.cpp:server
     container_name: conv-ai-llama
     ports:
       - "8080:8080"
     volumes:
-      - ./models:/models:ro      # mount your .gguf files here (read-only)
+      - ./models:/models:ro,z    # :z for SELinux relabel (Fedora/RHEL)
     command: >-
       --model ${MODEL_PATH:-/models/model.gguf}
       --host 0.0.0.0
@@ -79,7 +79,7 @@ services:
         condition: service_started   # start as soon as the container is up; backend retries internally
     # Volume mount for hot-reload during development — remove in production
     volumes:
-      - ./backend/app:/app/app
+      - ./backend/app:/app/app:z
     restart: unless-stopped
     networks:
       - conv-ai-net
