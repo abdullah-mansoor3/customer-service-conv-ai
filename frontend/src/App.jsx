@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
+const createSessionId = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
 function App() {
   // const [messages, setMessages] = useState([]); // Stores the chat history
   const [messages, setMessages] = useState([
@@ -8,7 +15,8 @@ function App() {
   ]);
   const [input, setInput] = useState('');
   const [chatHistory, setChatHistory] = useState([]);
-  const [currentChatId, setCurrentChatId] = useState(null);
+  const [activeUiChatId, setActiveUiChatId] = useState(null);
+  const [backendSessionId, setBackendSessionId] = useState(() => createSessionId());
   const [isTyping, setIsTyping] = useState(false);
 
   // Voice-related state
@@ -16,8 +24,15 @@ function App() {
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [isVoiceProcessing, setIsVoiceProcessing] = useState(false);
+  const [isVoiceTurnActive, setIsVoiceTurnActive] = useState(false);
+  const [isVoiceLoading, setIsVoiceLoading] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [waveLevels, setWaveLevels] = useState(Array(24).fill(0.08));
+  const [voiceOptions, setVoiceOptions] = useState([
+    { id: 'ella', name: 'Ella', description: 'US English female, warm and clear' },
+    { id: 'john', name: 'John', description: 'US English male, neutral and calm' },
+  ]);
+  const [selectedVoiceId, setSelectedVoiceId] = useState('ella');
 
   const socket = useRef(null);
   const voiceSocket = useRef(null);
@@ -58,6 +73,11 @@ function App() {
     socket.current.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+
+        if (data.type === 'session_id' && data.session_id) {
+          // Keep frontend and backend aligned, but frontend still owns session lifecycle.
+          setBackendSessionId(data.session_id);
+        }
 
         // Standard streaming pattern: backend sends { "type": "token", "token": "Hello", "done": false }
         if (data.type === 'token') {
@@ -106,15 +126,37 @@ function App() {
               setIsVoiceProcessing(true);
               setIsTyping(true);
             }
+          } else if (data.type === 'voice_catalog') {
+            if (Array.isArray(data.voices) && data.voices.length > 0) {
+              setVoiceOptions(data.voices);
+            }
+            if (data.default_voice_id) {
+              setSelectedVoiceId(data.default_voice_id);
+            }
+          } else if (data.type === 'voice_selected') {
+            if (data.voice_id) {
+              setSelectedVoiceId(data.voice_id);
+            }
+          } else if (data.type === 'session_id') {
+            if (data.session_id) {
+              setBackendSessionId(data.session_id);
+            }
+          } else if (data.type === 'voice_loading') {
+            setIsVoiceLoading(true);
+          } else if (data.type === 'voice_ready') {
+            setIsVoiceLoading(false);
           } else if (data.type === 'assistant_text') {
             setMessages(prev => [...prev, { role: 'ai', content: data.text }]);
             setIsVoiceProcessing(false);
             setIsTyping(false);
           } else if (data.type === 'cancelled') {
             resetLiveVoiceState();
+            setIsVoiceTurnActive(false);
+            setIsVoiceProcessing(false);
             setMessages(prev => [...prev, { role: 'ai', content: 'Voice turn cancelled.' }]);
           } else if (data.type === 'error') {
             console.error("Voice error:", data.error);
+            setIsVoiceTurnActive(false);
             setIsVoiceProcessing(false);
             setMessages(prev => [...prev, { role: 'ai', content: `Voice Error: ${data.error}` }]);
             setIsTyping(false);
@@ -132,7 +174,9 @@ function App() {
 
     voiceSocket.current.onclose = () => {
       console.log("❌ Voice WebSocket disconnected");
+      setIsVoiceTurnActive(false);
       setIsVoiceProcessing(false);
+      setIsVoiceLoading(false);
       stopWaveAnimation(true);
       setIsTyping(false);
     };
@@ -342,6 +386,7 @@ function App() {
   const cancelRecording = () => {
     discardRecordingRef.current = true;
     setIsRecording(false);
+    setIsVoiceTurnActive(false);
     setIsVoiceProcessing(false);
     setIsTyping(false);
     resetLiveVoiceState();
@@ -356,20 +401,48 @@ function App() {
   };
 
   const sendAudioToBackend = async (audioBlob) => {
+    if (isVoiceTurnActive) {
+      setMessages(prev => [...prev, { role: 'ai', content: 'Please wait, previous voice response is still in progress.' }]);
+      return;
+    }
+
     if (!voiceSocket.current || voiceSocket.current.readyState !== WebSocket.OPEN) {
       setMessages(prev => [...prev, { role: 'ai', content: "❌ Error: Voice connection not available." }]);
       setIsVoiceProcessing(false);
+      setIsVoiceTurnActive(false);
       return;
     }
 
     try {
+      setIsVoiceTurnActive(true);
+
+      // Ensure voice and text share the same backend session/state.
+      voiceSocket.current.send(JSON.stringify({
+        type: 'set_session',
+        session_id: backendSessionId,
+      }));
+
+      // Ensure backend uses the currently selected voice for this turn.
+      voiceSocket.current.send(JSON.stringify({ type: 'set_voice', voice_id: selectedVoiceId }));
+
       // Convert blob to array buffer
       const arrayBuffer = await audioBlob.arrayBuffer();
       voiceSocket.current.send(arrayBuffer);
     } catch (error) {
       console.error('Error sending audio:', error);
       setMessages(prev => [...prev, { role: 'ai', content: "❌ Error: Failed to send audio." }]);
+      setIsVoiceTurnActive(false);
       setIsVoiceProcessing(false);
+    }
+  };
+
+  const handleVoiceChange = (nextVoiceId) => {
+    setSelectedVoiceId(nextVoiceId);
+    setIsVoiceLoading(true);
+    if (voiceSocket.current && voiceSocket.current.readyState === WebSocket.OPEN) {
+      voiceSocket.current.send(JSON.stringify({ type: 'set_voice', voice_id: nextVoiceId }));
+    } else {
+      setIsVoiceLoading(false);
     }
   };
 
@@ -385,6 +458,7 @@ function App() {
       currentAudioRef.current = audio;
       audio.onended = () => {
         setIsPlayingAudio(false);
+        setIsVoiceTurnActive(false);
         currentAudioRef.current = null;
         URL.revokeObjectURL(audioUrl);
       };
@@ -393,6 +467,7 @@ function App() {
     } catch (error) {
       console.error('Error playing audio:', error);
       setIsPlayingAudio(false);
+      setIsVoiceTurnActive(false);
     }
   };
 
@@ -407,11 +482,13 @@ function App() {
       currentAudioRef.current.currentTime = 0;
       currentAudioRef.current = null;
       setIsPlayingAudio(false);
+      setIsVoiceTurnActive(false);
       return;
     }
 
     if (isVoiceProcessing && voiceSocket.current && voiceSocket.current.readyState === WebSocket.OPEN) {
       voiceSocket.current.send(JSON.stringify({ type: 'cancel_current' }));
+      setIsVoiceTurnActive(false);
       setIsVoiceProcessing(false);
       setIsTyping(false);
       resetLiveVoiceState();
@@ -444,7 +521,7 @@ function App() {
       if (socket.current && socket.current.readyState === WebSocket.OPEN) {
         socket.current.send(JSON.stringify({
           message: currentInput,
-          session_id: currentChatId || "new_session"
+          session_id: backendSessionId
         }));
       } else {
         // Failure Handling (Requirement 6)
@@ -473,39 +550,41 @@ function App() {
   };
 
   const resetChat = () => {
-    if (currentChatId === null && messages.length > 1) { // messages.length > 1 so we don't save empty greetings
+    if (activeUiChatId === null && messages.length > 1) { // messages.length > 1 so we don't save empty greetings
       const chatTitle = messages.find(m => m.role === 'user')?.content.substring(0, 20) || "Old Chat";
       const newId = Date.now();
-      setChatHistory(prev => [{ id: newId, title: chatTitle, data: messages }, ...prev]);
+      setChatHistory(prev => [{ id: newId, title: chatTitle, data: messages, sessionId: backendSessionId }, ...prev]);
     }
 
     // Reset with greeting
     setMessages([{ role: 'ai', content: "Hello! A new session has started. How can I help?" }]);
-    setCurrentChatId(null);
+    setActiveUiChatId(null);
+    setBackendSessionId(createSessionId());
     setIsTyping(false);
   };
 
   const handleSwitchChat = (selectedChat) => {
     // 1. If we are already on this chat, do nothing
-    if (currentChatId === selectedChat.id) return;
+    if (activeUiChatId === selectedChat.id) return;
 
     // 2. If we were on a NEW unsaved chat, save it first
-    if (currentChatId === null && messages.length > 0) {
+    if (activeUiChatId === null && messages.length > 0) {
       const chatTitle = messages.find(m => m.role === 'user')?.content.substring(0, 20) || "Old Chat";
       const newId = Date.now();
-      setChatHistory(prev => [{ id: newId, title: chatTitle, data: messages }, ...prev]);
+      setChatHistory(prev => [{ id: newId, title: chatTitle, data: messages, sessionId: backendSessionId }, ...prev]);
     }
 
     // 3. If we were on an EXISTING chat, update its data in history (in case new messages were added)
-    else if (currentChatId !== null) {
+    else if (activeUiChatId !== null) {
       setChatHistory(prev => prev.map(chat =>
-        chat.id === currentChatId ? { ...chat, data: messages } : chat
+        chat.id === activeUiChatId ? { ...chat, data: messages, sessionId: backendSessionId } : chat
       ));
     }
 
     // 4. Finally, switch to the selected chat
     setMessages(selectedChat.data);
-    setCurrentChatId(selectedChat.id);
+    setActiveUiChatId(selectedChat.id);
+    setBackendSessionId(selectedChat.sessionId || createSessionId());
     setIsTyping(false);
   };
 
@@ -531,7 +610,7 @@ function App() {
           {chatHistory.map((chat) => (
             <div 
               key={chat.id} 
-              className={`history-item ${currentChatId === chat.id ? 'active' : ''} ${isTyping ? 'disabled' : ''}`}
+              className={`history-item ${activeUiChatId === chat.id ? 'active' : ''} ${isTyping ? 'disabled' : ''}`}
               onClick={() => !isTyping && handleSwitchChat(chat)} // Only click if not typing
             >
               {chat.title}...
@@ -600,10 +679,25 @@ function App() {
               </>
             ) : (
               <div className="voice-controls">
+                <div className="voice-picker">
+                  <label htmlFor="voice-select">Voice</label>
+                  <select
+                    id="voice-select"
+                    value={selectedVoiceId}
+                    onChange={(e) => handleVoiceChange(e.target.value)}
+                    disabled={isRecording || isVoiceProcessing || isPlayingAudio || isVoiceTurnActive}
+                  >
+                    {voiceOptions.map((voice) => (
+                      <option key={voice.id} value={voice.id}>
+                        {voice.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <button
                   className={`voice-btn ${isRecording ? 'recording' : ''}`}
                   onClick={isRecording ? stopRecording : startRecording}
-                  disabled={isPlayingAudio || isVoiceProcessing}
+                  disabled={isPlayingAudio || isVoiceProcessing || isVoiceTurnActive}
                 >
                   {isRecording ? '⏹️ Stop' : '🎤 Speak'}
                 </button>
@@ -624,7 +718,9 @@ function App() {
                   </div>
                 )}
                 <span className="voice-status">
-                  {isRecording
+                  {isVoiceLoading
+                    ? 'Preparing voice...'
+                    : isRecording
                     ? 'Listening...'
                     : isVoiceProcessing
                       ? 'Transcribing...'
