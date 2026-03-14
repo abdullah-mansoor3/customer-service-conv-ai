@@ -10,16 +10,36 @@ function App() {
   const [chatHistory, setChatHistory] = useState([]);
   const [currentChatId, setCurrentChatId] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
+
+  // Voice-related state
+  const [isRecording, setIsRecording] = useState(false);
+  const [isVoiceMode, setIsVoiceMode] = useState(false);
+  const [audioChunks, setAudioChunks] = useState([]);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+
   const socket = useRef(null);
+  const voiceSocket = useRef(null);
+  const mediaRecorder = useRef(null);
+  const audioContext = useRef(null);
   const scrollRef = useRef(null);
   const IS_OFFLINE = false;
+
+  const getWsBaseUrl = () => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    // If served via nginx at :3000, use same host so /ws proxy works.
+    if (window.location.port === '3000') {
+      return `${protocol}//${window.location.host}`;
+    }
+    // Vite dev server (:5173) should still hit backend directly on :8000.
+    return `${protocol}//${window.location.hostname}:8000`;
+  };
 
   // 1. Setup WebSocket Connection
   useEffect(() => {
     if (IS_OFFLINE) return; // Don't try to connect if we are testing locally
 
     // backend/main.py route is /ws/chat (session_id is sent in the JSON payload)
-    socket.current = new WebSocket('ws://localhost:8000/ws/chat');
+    socket.current = new WebSocket(`${getWsBaseUrl()}/ws/chat`);
 
     socket.current.onopen = () => console.log("✅ Connected to AI Backend");
 
@@ -54,6 +74,49 @@ function App() {
     return () => socket.current?.close();
   }, [IS_OFFLINE]); // Re-runs if you toggle the mode
 
+  // 2. Setup Voice WebSocket Connection
+  useEffect(() => {
+    if (IS_OFFLINE || !isVoiceMode) return;
+
+    voiceSocket.current = new WebSocket(`${getWsBaseUrl()}/ws/voice-chat`);
+
+    voiceSocket.current.onopen = () => console.log("✅ Connected to Voice Backend");
+
+    voiceSocket.current.onmessage = (event) => {
+      if (typeof event.data === 'string') {
+        // JSON message (transcription or error)
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'transcription') {
+            // Show what the user said
+            setMessages(prev => [...prev, { role: 'user', content: data.text }]);
+            setIsTyping(true);
+          } else if (data.type === 'assistant_text') {
+            setMessages(prev => [...prev, { role: 'ai', content: data.text }]);
+            setIsTyping(false);
+          } else if (data.type === 'error') {
+            console.error("Voice error:", data.error);
+            setMessages(prev => [...prev, { role: 'ai', content: `Voice Error: ${data.error}` }]);
+            setIsTyping(false);
+          }
+        } catch (err) {
+          console.error("Voice JSON parse error:", err);
+        }
+      } else {
+        // Binary audio data - play it
+        setIsTyping(false);
+        playAudioResponse(event.data);
+      }
+    };
+
+    voiceSocket.current.onclose = () => {
+      console.log("❌ Voice WebSocket disconnected");
+      setIsTyping(false);
+    };
+
+    return () => voiceSocket.current?.close();
+  }, [IS_OFFLINE, isVoiceMode]);
+
   // Auto-scroll to bottom whenever messages change
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -78,6 +141,86 @@ function App() {
         return [...prev, { role: 'ai', content: token }];
       }
     });
+  };
+
+  // Voice functions
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder.current = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+
+      const chunks = [];
+      mediaRecorder.current.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+
+      mediaRecorder.current.onstop = () => {
+        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
+        sendAudioToBackend(audioBlob);
+        // Stop all tracks to release microphone
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorder.current.start();
+      setIsRecording(true);
+    } catch (error) {
+      console.error('Error starting recording:', error);
+      setMessages(prev => [...prev, { role: 'ai', content: "❌ Error: Could not access microphone." }]);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorder.current && isRecording) {
+      mediaRecorder.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  const sendAudioToBackend = async (audioBlob) => {
+    if (!voiceSocket.current || voiceSocket.current.readyState !== WebSocket.OPEN) {
+      setMessages(prev => [...prev, { role: 'ai', content: "❌ Error: Voice connection not available." }]);
+      return;
+    }
+
+    try {
+      // Convert blob to array buffer
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      voiceSocket.current.send(arrayBuffer);
+    } catch (error) {
+      console.error('Error sending audio:', error);
+      setMessages(prev => [...prev, { role: 'ai', content: "❌ Error: Failed to send audio." }]);
+    }
+  };
+
+  const playAudioResponse = async (audioData) => {
+    try {
+      setIsPlayingAudio(true);
+
+      // Create blob from received data
+      const audioBlob = new Blob([audioData], { type: 'audio/wav' });
+      const audioUrl = URL.createObjectURL(audioBlob);
+
+      const audio = new Audio(audioUrl);
+      audio.onended = () => {
+        setIsPlayingAudio(false);
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      await audio.play();
+    } catch (error) {
+      console.error('Error playing audio:', error);
+      setIsPlayingAudio(false);
+    }
+  };
+
+  const toggleVoiceMode = () => {
+    setIsVoiceMode(!isVoiceMode);
+    if (isVoiceMode) {
+      // Switching to text mode
+      stopRecording();
+    }
   };
 
   const handleSend = () => {
@@ -222,32 +365,57 @@ function App() {
 
         <div className="input-area">
           <div className="input-container">
-            <textarea 
-              value={input} 
-              onChange={(e) => setInput(e.target.value)}
-              onInput={(e) => {
-                // This resets height to 'auto' to shrink when deleting, 
-                // then sets it to scrollHeight to grow
-                e.target.style.height = 'auto';
-                e.target.style.height = e.target.scrollHeight + 'px';
-              }}
-              onKeyPress={(e) => {
-                // Only send on Enter (without Shift for new line)
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                  e.target.style.height = 'auto';
-                }
-              }}
-              placeholder={isTyping ? "AI is thinking..." : "Type a message..."}
+            {!isVoiceMode ? (
+              <>
+                <textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onInput={(e) => {
+                    // This resets height to 'auto' to shrink when deleting,
+                    // then sets it to scrollHeight to grow
+                    e.target.style.height = 'auto';
+                    e.target.style.height = e.target.scrollHeight + 'px';
+                  }}
+                  onKeyPress={(e) => {
+                    // Only send on Enter (without Shift for new line)
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                      e.target.style.height = 'auto';
+                    }
+                  }}
+                  placeholder={isTyping ? "AI is thinking..." : "Type a message..."}
+                  disabled={isTyping}
+                  rows="1" // Start small
+                />
+                <button
+                  onClick={handleSend}
+                  disabled={isTyping} // Disable button while typing
+                >
+                  {isTyping ? "..." : "Send"}
+                </button>
+              </>
+            ) : (
+              <div className="voice-controls">
+                <button
+                  className={`voice-btn ${isRecording ? 'recording' : ''}`}
+                  onClick={isRecording ? stopRecording : startRecording}
+                  disabled={isTyping || isPlayingAudio}
+                >
+                  {isRecording ? '⏹️ Stop' : '🎤 Speak'}
+                </button>
+                <span className="voice-status">
+                  {isRecording ? 'Listening...' : isPlayingAudio ? 'Speaking...' : 'Voice Mode'}
+                </span>
+              </div>
+            )}
+            <button
+              className={`mode-toggle ${isVoiceMode ? 'voice-active' : ''}`}
+              onClick={toggleVoiceMode}
               disabled={isTyping}
-              rows="1" // Start small
-            />
-            <button 
-              onClick={handleSend} 
-              disabled={isTyping} // Disable button while typing
+              title={isVoiceMode ? 'Switch to Text Mode' : 'Switch to Voice Mode'}
             >
-              {isTyping ? "..." : "Send"}
+              {isVoiceMode ? '📝' : '🎤'}
             </button>
           </div>
         </div>

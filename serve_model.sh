@@ -2,8 +2,18 @@
 
 # Load environment variables from .env file
 if [ -f .env ]; then
-    # Export variables from .env, ignoring comments
-    export $(grep -v '^#' .env | xargs)
+    # Export variables from .env, ignoring comments and handling complex strings
+    while IFS='=' read -r key value; do
+        # Skip comments and empty lines
+        [[ $key =~ ^[[:space:]]*# ]] && continue
+        [[ -z $key ]] && continue
+
+        # Remove quotes from value if present
+        value=$(echo "$value" | sed 's/^"\(.*\)"$/\1/' | sed "s/^'\(.*\)'$/\1/")
+
+        # Export the variable
+        export "$key=$value"
+    done < .env
 else
     echo ".env file not found! Please create one with MODEL_PATH defined."
     exit 1

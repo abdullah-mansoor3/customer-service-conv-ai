@@ -239,3 +239,67 @@
   font-weight: 900;
   border: none;
 }
+
+/* VOICE CONTROLS */
+.voice-controls {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  flex: 1;
+}
+
+.voice-btn {
+  background: var(--accent-pastel);
+  color: #1a1a24;
+  border: none;
+  border-radius: 15px;
+  padding: 12px 25px;
+  font-weight: 900;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.voice-btn:hover:not(:disabled) {
+  transform: scale(1.05);
+}
+
+.voice-btn.recording {
+  background: #ff6b6b;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+.voice-status {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+.mode-toggle {
+  background: var(--secondary-pastel);
+  color: #1a1a24;
+  border: none;
+  border-radius: 50%;
+  width: 45px;
+  height: 45px;
+  font-size: 1.2rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mode-toggle:hover:not(:disabled) {
+  transform: scale(1.1);
+}
+
+.mode-toggle.voice-active {
+  background: var(--accent-pastel);
+}

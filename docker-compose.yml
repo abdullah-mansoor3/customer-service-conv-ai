@@ -80,6 +80,7 @@ services:
     # Volume mount for hot-reload during development — remove in production
     volumes:
       - ./backend/app:/app/app:z
+      - ./models:/models:ro,z    # Mount models directory including voice models
     restart: unless-stopped
     networks:
       - conv-ai-net
