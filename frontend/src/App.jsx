@@ -14,13 +14,25 @@ function App() {
   // Voice-related state
   const [isRecording, setIsRecording] = useState(false);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
-  const [audioChunks, setAudioChunks] = useState([]);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [isVoiceProcessing, setIsVoiceProcessing] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const [waveLevels, setWaveLevels] = useState(Array(24).fill(0.08));
 
   const socket = useRef(null);
   const voiceSocket = useRef(null);
   const mediaRecorder = useRef(null);
   const audioContext = useRef(null);
+  const analyserRef = useRef(null);
+  const waveformFrameRef = useRef(null);
+  const micStreamRef = useRef(null);
+  const recordingChunksRef = useRef([]);
+  const discardRecordingRef = useRef(false);
+  const currentAudioRef = useRef(null);
+  const transcriptTargetWordsRef = useRef([]);
+  const transcriptRenderedCountRef = useRef(0);
+  const transcriptTickerRef = useRef(null);
+  const transcriptFinalizePendingRef = useRef(false);
   const scrollRef = useRef(null);
   const IS_OFFLINE = false;
 
@@ -87,15 +99,23 @@ function App() {
         // JSON message (transcription or error)
         try {
           const data = JSON.parse(event.data);
-          if (data.type === 'transcription') {
-            // Show what the user said
-            setMessages(prev => [...prev, { role: 'user', content: data.text }]);
-            setIsTyping(true);
+          if (data.type === 'transcription_partial' || data.type === 'transcription_final') {
+            handleTranscriptProgress(data.text || '');
+            if (data.type === 'transcription_final') {
+              transcriptFinalizePendingRef.current = true;
+              setIsVoiceProcessing(true);
+              setIsTyping(true);
+            }
           } else if (data.type === 'assistant_text') {
             setMessages(prev => [...prev, { role: 'ai', content: data.text }]);
+            setIsVoiceProcessing(false);
             setIsTyping(false);
+          } else if (data.type === 'cancelled') {
+            resetLiveVoiceState();
+            setMessages(prev => [...prev, { role: 'ai', content: 'Voice turn cancelled.' }]);
           } else if (data.type === 'error') {
             console.error("Voice error:", data.error);
+            setIsVoiceProcessing(false);
             setMessages(prev => [...prev, { role: 'ai', content: `Voice Error: ${data.error}` }]);
             setIsTyping(false);
           }
@@ -105,12 +125,15 @@ function App() {
       } else {
         // Binary audio data - play it
         setIsTyping(false);
+        setIsVoiceProcessing(false);
         playAudioResponse(event.data);
       }
     };
 
     voiceSocket.current.onclose = () => {
       console.log("❌ Voice WebSocket disconnected");
+      setIsVoiceProcessing(false);
+      stopWaveAnimation(true);
       setIsTyping(false);
     };
 
@@ -121,6 +144,21 @@ function App() {
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    return () => {
+      if (transcriptTickerRef.current) {
+        clearInterval(transcriptTickerRef.current);
+      }
+      stopWaveAnimation(true);
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+      }
+    };
+  }, []);
 
   const updateLastAiMessage = (token) => {
     setMessages((prev) => {
@@ -143,24 +181,146 @@ function App() {
     });
   };
 
+  const upsertLiveUserMessage = (text, finalize = false) => {
+    setMessages((prev) => {
+      const idx = prev.findIndex((m) => m.role === 'user' && m.isLiveTranscription);
+      if (idx === -1) {
+        return [...prev, { role: 'user', content: text, isLiveTranscription: !finalize }];
+      }
+      const updated = [...prev];
+      updated[idx] = {
+        ...updated[idx],
+        content: text,
+        isLiveTranscription: !finalize,
+      };
+      return updated;
+    });
+  };
+
+  const resetLiveVoiceState = () => {
+    transcriptTargetWordsRef.current = [];
+    transcriptRenderedCountRef.current = 0;
+    transcriptFinalizePendingRef.current = false;
+    setLiveTranscript('');
+    if (transcriptTickerRef.current) {
+      clearInterval(transcriptTickerRef.current);
+      transcriptTickerRef.current = null;
+    }
+    setMessages((prev) => prev.map((m) => (
+      m.isLiveTranscription ? { ...m, isLiveTranscription: false } : m
+    )));
+  };
+
+  const ensureTranscriptTicker = () => {
+    if (transcriptTickerRef.current) return;
+    transcriptTickerRef.current = setInterval(() => {
+      const target = transcriptTargetWordsRef.current;
+      const rendered = transcriptRenderedCountRef.current;
+
+      if (rendered < target.length) {
+        const nextCount = rendered + 1;
+        transcriptRenderedCountRef.current = nextCount;
+        const text = target.slice(0, nextCount).join(' ');
+        setLiveTranscript(text);
+        upsertLiveUserMessage(text, false);
+        return;
+      }
+
+      if (transcriptFinalizePendingRef.current && target.length > 0) {
+        transcriptFinalizePendingRef.current = false;
+        const finalText = target.join(' ');
+        setLiveTranscript(finalText);
+        upsertLiveUserMessage(finalText, true);
+      }
+
+      if (!transcriptFinalizePendingRef.current && rendered >= target.length) {
+        clearInterval(transcriptTickerRef.current);
+        transcriptTickerRef.current = null;
+      }
+    }, 70);
+  };
+
+  const handleTranscriptProgress = (text) => {
+    const words = text.trim().split(/\s+/).filter(Boolean);
+    transcriptTargetWordsRef.current = words;
+    ensureTranscriptTicker();
+  };
+
+  const stopWaveAnimation = (reset = false) => {
+    if (waveformFrameRef.current) {
+      cancelAnimationFrame(waveformFrameRef.current);
+      waveformFrameRef.current = null;
+    }
+    if (audioContext.current) {
+      audioContext.current.close().catch(() => {});
+      audioContext.current = null;
+    }
+    analyserRef.current = null;
+    if (reset) {
+      setWaveLevels(Array(24).fill(0.08));
+    }
+  };
+
+  const startWaveAnimation = (stream) => {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+
+    audioContext.current = new Ctx();
+    const analyser = audioContext.current.createAnalyser();
+    analyser.fftSize = 128;
+    analyser.smoothingTimeConstant = 0.85;
+    const source = audioContext.current.createMediaStreamSource(stream);
+    source.connect(analyser);
+    analyserRef.current = analyser;
+
+    const bins = new Uint8Array(analyser.frequencyBinCount);
+    const draw = () => {
+      if (!analyserRef.current) return;
+      analyserRef.current.getByteFrequencyData(bins);
+
+      const sampleCount = 24;
+      const step = Math.max(1, Math.floor(bins.length / sampleCount));
+      const next = Array.from({ length: sampleCount }, (_, i) => {
+        const val = bins[i * step] / 255;
+        return Math.max(0.08, val);
+      });
+
+      setWaveLevels(next);
+      waveformFrameRef.current = requestAnimationFrame(draw);
+    };
+
+    waveformFrameRef.current = requestAnimationFrame(draw);
+  };
+
   // Voice functions
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStreamRef.current = stream;
+      startWaveAnimation(stream);
       mediaRecorder.current = new MediaRecorder(stream, { mimeType: 'audio/webm' });
 
-      const chunks = [];
+      discardRecordingRef.current = false;
+      recordingChunksRef.current = [];
+      resetLiveVoiceState();
+
       mediaRecorder.current.ondataavailable = (event) => {
         if (event.data.size > 0) {
-          chunks.push(event.data);
+          recordingChunksRef.current.push(event.data);
         }
       };
 
       mediaRecorder.current.onstop = () => {
-        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
-        sendAudioToBackend(audioBlob);
-        // Stop all tracks to release microphone
-        stream.getTracks().forEach(track => track.stop());
+        stopWaveAnimation(true);
+        const shouldDiscard = discardRecordingRef.current;
+        if (!shouldDiscard) {
+          const audioBlob = new Blob(recordingChunksRef.current, { type: 'audio/webm' });
+          sendAudioToBackend(audioBlob);
+        }
+        if (micStreamRef.current) {
+          micStreamRef.current.getTracks().forEach((track) => track.stop());
+          micStreamRef.current = null;
+        }
       };
 
       mediaRecorder.current.start();
@@ -175,12 +335,30 @@ function App() {
     if (mediaRecorder.current && isRecording) {
       mediaRecorder.current.stop();
       setIsRecording(false);
+      setIsVoiceProcessing(true);
     }
+  };
+
+  const cancelRecording = () => {
+    discardRecordingRef.current = true;
+    setIsRecording(false);
+    setIsVoiceProcessing(false);
+    setIsTyping(false);
+    resetLiveVoiceState();
+    if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
+      mediaRecorder.current.stop();
+    }
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach((track) => track.stop());
+      micStreamRef.current = null;
+    }
+    stopWaveAnimation(true);
   };
 
   const sendAudioToBackend = async (audioBlob) => {
     if (!voiceSocket.current || voiceSocket.current.readyState !== WebSocket.OPEN) {
       setMessages(prev => [...prev, { role: 'ai', content: "❌ Error: Voice connection not available." }]);
+      setIsVoiceProcessing(false);
       return;
     }
 
@@ -191,6 +369,7 @@ function App() {
     } catch (error) {
       console.error('Error sending audio:', error);
       setMessages(prev => [...prev, { role: 'ai', content: "❌ Error: Failed to send audio." }]);
+      setIsVoiceProcessing(false);
     }
   };
 
@@ -203,8 +382,10 @@ function App() {
       const audioUrl = URL.createObjectURL(audioBlob);
 
       const audio = new Audio(audioUrl);
+      currentAudioRef.current = audio;
       audio.onended = () => {
         setIsPlayingAudio(false);
+        currentAudioRef.current = null;
         URL.revokeObjectURL(audioUrl);
       };
 
@@ -215,11 +396,33 @@ function App() {
     }
   };
 
+  const cancelVoiceTurn = () => {
+    if (isRecording) {
+      cancelRecording();
+      return;
+    }
+
+    if (isPlayingAudio && currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current.currentTime = 0;
+      currentAudioRef.current = null;
+      setIsPlayingAudio(false);
+      return;
+    }
+
+    if (isVoiceProcessing && voiceSocket.current && voiceSocket.current.readyState === WebSocket.OPEN) {
+      voiceSocket.current.send(JSON.stringify({ type: 'cancel_current' }));
+      setIsVoiceProcessing(false);
+      setIsTyping(false);
+      resetLiveVoiceState();
+    }
+  };
+
   const toggleVoiceMode = () => {
     setIsVoiceMode(!isVoiceMode);
     if (isVoiceMode) {
       // Switching to text mode
-      stopRecording();
+      cancelVoiceTurn();
     }
   };
 
@@ -400,13 +603,40 @@ function App() {
                 <button
                   className={`voice-btn ${isRecording ? 'recording' : ''}`}
                   onClick={isRecording ? stopRecording : startRecording}
-                  disabled={isTyping || isPlayingAudio}
+                  disabled={isPlayingAudio || isVoiceProcessing}
                 >
                   {isRecording ? '⏹️ Stop' : '🎤 Speak'}
                 </button>
+                {(isRecording || liveTranscript) && (
+                  <div className="voice-live-area">
+                    <div className="voice-waveform" aria-label="voice waveform">
+                      {waveLevels.map((level, i) => (
+                        <span
+                          key={i}
+                          className="voice-wave-bar"
+                          style={{ transform: `scaleY(${Math.min(1, Math.max(0.08, level))})` }}
+                        />
+                      ))}
+                    </div>
+                    <div className="voice-transcript-live">
+                      {liveTranscript || 'Listening...'}
+                    </div>
+                  </div>
+                )}
                 <span className="voice-status">
-                  {isRecording ? 'Listening...' : isPlayingAudio ? 'Speaking...' : 'Voice Mode'}
+                  {isRecording
+                    ? 'Listening...'
+                    : isVoiceProcessing
+                      ? 'Transcribing...'
+                      : isPlayingAudio
+                        ? 'Speaking...'
+                        : 'Voice Mode'}
                 </span>
+                {(isRecording || isVoiceProcessing || isPlayingAudio) && (
+                  <button className="voice-cancel-btn" onClick={cancelVoiceTurn}>
+                    Cancel
+                  </button>
+                )}
               </div>
             )}
             <button

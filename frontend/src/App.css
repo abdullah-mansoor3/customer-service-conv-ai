@@ -246,6 +246,7 @@
   align-items: center;
   gap: 15px;
   flex: 1;
+  flex-wrap: wrap;
 }
 
 .voice-btn {
@@ -279,6 +280,57 @@
   color: var(--text-muted);
   font-size: 0.9rem;
   font-style: italic;
+}
+
+.voice-live-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 230px;
+  max-width: 360px;
+}
+
+.voice-waveform {
+  height: 32px;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(195, 170, 255, 0.15);
+  border: 1px solid rgba(195, 170, 255, 0.35);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.voice-wave-bar {
+  width: 4px;
+  height: 18px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffd3dc 0%, #c3aaff 100%);
+  transform-origin: center;
+  transition: transform 80ms linear;
+}
+
+.voice-transcript-live {
+  font-size: 0.78rem;
+  line-height: 1.3;
+  color: var(--text-main);
+  opacity: 0.95;
+  max-height: 2.8em;
+  overflow: hidden;
+}
+
+.voice-cancel-btn {
+  background: #ff6b6b;
+  color: #1a1a24;
+  border: none;
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.voice-cancel-btn:hover {
+  filter: brightness(1.05);
 }
 
 .mode-toggle {

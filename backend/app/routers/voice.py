@@ -109,6 +109,24 @@ def synthesize_wav_bytes(text: str) -> bytes:
         voice.synthesize_wav(text, wav_file)
     return wav_buffer.getvalue()
 
+
+def iter_transcription_segments(audio_data: bytes, suffix: str = ".webm"):
+    """Yield transcription segments progressively for live UX updates."""
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_audio:
+        temp_audio.write(audio_data)
+        temp_audio_path = temp_audio.name
+
+    try:
+        model = get_whisper_model()
+        segments, _ = model.transcribe(temp_audio_path, language="en")
+        for segment in segments:
+            text = segment.text.strip()
+            if text:
+                yield text
+    finally:
+        if os.path.exists(temp_audio_path):
+            os.unlink(temp_audio_path)
+
 @router.post("/asr")
 async def speech_to_text(audio: UploadFile = File(...)):
     """
@@ -146,145 +164,198 @@ async def text_to_speech(data: dict):
 
 @router.websocket("/ws/voice-chat")
 async def voice_chat_websocket(websocket: WebSocket):
-    """
-    WebSocket endpoint for real-time voice chat.
-    Handles voice input -> ASR -> LLM -> TTS -> voice output
-    """
+    """WebSocket endpoint for real-time voice chat with cancellation support."""
     await websocket.accept()
+
+    current_task: asyncio.Task | None = None
+    cancel_event: asyncio.Event | None = None
+
+    async def process_voice_turn(turn_audio_data: bytes, turn_cancel_event: asyncio.Event):
+        try:
+            # Step 1: ASR - stream partial transcription updates
+            partial_text = ""
+            for segment_text in iter_transcription_segments(turn_audio_data, suffix=".webm"):
+                if turn_cancel_event.is_set():
+                    return
+                partial_text = f"{partial_text} {segment_text}".strip()
+                await websocket.send_json({"type": "transcription_partial", "text": partial_text})
+                await asyncio.sleep(0)
+
+            user_text = partial_text.strip()
+            if not user_text:
+                await websocket.send_json({
+                    "type": "error",
+                    "error": "No speech detected. Please try again.",
+                })
+                return
+
+            await websocket.send_json({"type": "transcription_final", "text": user_text})
+            if turn_cancel_event.is_set():
+                return
+
+            # Step 2: Process through LLM (reuse existing chat logic)
+            import httpx
+            import re
+            from app.config import DEFAULT_SYSTEM_PROMPT, FEW_SHOT_EXAMPLES, MAX_HISTORY
+
+            session_id = "voice_session"
+            if session_id not in sessions:
+                sessions[session_id] = {
+                    "created_at": "voice_session",
+                    "messages": [],
+                    "state": {
+                        "router_model": None,
+                        "lights_status": None,
+                        "error_message": None,
+                        "connection_type": None,
+                        "has_restarted": None,
+                    },
+                }
+
+            sessions[session_id]["messages"].append({"role": "user", "content": user_text})
+
+            state_str = json.dumps(sessions[session_id]["state"])
+            system_prompt = (
+                f"{DEFAULT_SYSTEM_PROMPT}\n\n"
+                "/no_think\n\n"
+                "You MUST begin EVERY response with a <STATE> JSON block "
+                "that tracks what you know so far, then a newline, then "
+                "your short reply (1-2 sentences max).\n\n"
+                "The STATE JSON has exactly these 5 keys:\n"
+                "  router_model, lights_status, error_message, connection_type, has_restarted\n"
+                "Use null for anything the user has NOT mentioned yet. "
+                "Only fill a field when the user explicitly states it.\n\n"
+                "=== FORMAT EXAMPLE (not real data, ignore these values) ===\n"
+                "If a user said their BrandX router has green lights:\n"
+                '<STATE>{"router_model": "BrandX", "lights_status": "green", '
+                '"error_message": null, "connection_type": null, '
+                '"has_restarted": null}</STATE>\n'
+                "I see your BrandX has green lights. What error are you getting?\n"
+                "=== END FORMAT EXAMPLE ===\n\n"
+                f"CURRENT KNOWN STATE (carry forward and update):\n{state_str}"
+            )
+
+            history = sessions[session_id]["messages"][-MAX_HISTORY:]
+            messages = [{"role": "system", "content": system_prompt}]
+            messages.extend(FEW_SHOT_EXAMPLES)
+            messages.extend(history)
+
+            payload = {
+                "messages": messages,
+                "temperature": 0.7,
+                "top_p": 0.8,
+                "top_k": 20,
+                "max_tokens": -1,
+                "stream": False,
+            }
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{LLAMA_SERVER_URL}/v1/chat/completions",
+                    json=payload,
+                )
+                response.raise_for_status()
+                result = response.json()
+
+            if turn_cancel_event.is_set():
+                return
+
+            ai_response_full = result["choices"][0]["message"]["content"]
+            match = re.search(r"<STATE>\s*(\{.*?\})\s*</STATE>\s*(.*)", ai_response_full, re.DOTALL)
+
+            if match:
+                try:
+                    new_state = json.loads(match.group(1))
+                    if isinstance(new_state, dict):
+                        for key, value in new_state.items():
+                            if value is not None and str(value).strip().lower() not in ("", "null", "none"):
+                                if key in sessions[session_id]["state"]:
+                                    sessions[session_id]["state"][key] = value
+                    ai_response = match.group(2).strip()
+                except json.JSONDecodeError:
+                    ai_response = ai_response_full.replace("<STATE>", "").replace("</STATE>", "").strip()
+            else:
+                ai_response = ai_response_full.replace("<STATE>", "").replace("</STATE>", "").strip()
+
+            sessions[session_id]["messages"].append({"role": "assistant", "content": ai_response})
+
+            await websocket.send_json({"type": "assistant_text", "text": ai_response})
+            if turn_cancel_event.is_set():
+                return
+
+            # Step 3: TTS - run off event loop
+            try:
+                audio_bytes = await asyncio.wait_for(
+                    asyncio.to_thread(synthesize_wav_bytes, ai_response),
+                    timeout=20.0,
+                )
+                if turn_cancel_event.is_set():
+                    return
+                await websocket.send_bytes(audio_bytes)
+            except asyncio.TimeoutError:
+                await websocket.send_json({
+                    "type": "error",
+                    "error": "TTS generation timed out. Please try a shorter prompt.",
+                })
+
+        except asyncio.CancelledError:
+            # Task cancelled by user; ignore quietly.
+            return
+        except Exception as e:
+            logging.error(f"Voice processing error: {e}")
+            await websocket.send_json({
+                "type": "error",
+                "error": f"Voice processing failed: {str(e)}",
+            })
 
     try:
         while True:
-            # Receive audio data from client
-            audio_data = await websocket.receive_bytes()
+            message = await websocket.receive()
 
-            try:
-                # Step 1: ASR - Convert speech to text
-                user_text = transcribe_audio_bytes(audio_data, suffix=".webm")
+            if current_task is not None and current_task.done():
+                current_task = None
+                cancel_event = None
 
-                if not user_text:
-                    continue  # Skip if no speech detected
+            if message.get("type") == "websocket.disconnect":
+                break
 
-                # Send transcription to client for display
-                await websocket.send_json({
-                    "type": "transcription",
-                    "text": user_text
-                })
+            text_payload = message.get("text")
+            bytes_payload = message.get("bytes")
 
-                # Step 2: Process through LLM (reuse existing chat logic)
-                import httpx
-                from app.config import DEFAULT_SYSTEM_PROMPT, FEW_SHOT_EXAMPLES, MAX_HISTORY
-
-                # Get or create session
-                session_id = "voice_session"  # Could be made dynamic
-
-                if session_id not in sessions:
-                    sessions[session_id] = {
-                        "created_at": "voice_session",
-                        "messages": [],
-                        "state": {"router_model": None, "lights_status": None, "error_message": None,
-                                "connection_type": None, "has_restarted": None}
-                    }
-
-                # Add user message
-                sessions[session_id]["messages"].append({"role": "user", "content": user_text})
-
-                # Build prompt like in chat.py
-                state_str = json.dumps(sessions[session_id]["state"])
-                system_prompt = (
-                    f"{DEFAULT_SYSTEM_PROMPT}\n\n"
-                    "/no_think\n\n"
-                    "You MUST begin EVERY response with a <STATE> JSON block "
-                    "that tracks what you know so far, then a newline, then "
-                    "your short reply (1-2 sentences max).\n\n"
-                    "The STATE JSON has exactly these 5 keys:\n"
-                    '  router_model, lights_status, error_message, '
-                    'connection_type, has_restarted\n'
-                    'Use null for anything the user has NOT mentioned yet. '
-                    'Only fill a field when the user explicitly states it.\n\n'
-                    "=== FORMAT EXAMPLE (not real data, ignore these values) ===\n"
-                    'If a user said their BrandX router has green lights:\n'
-                    '<STATE>{"router_model": "BrandX", "lights_status": "green", '
-                    '"error_message": null, "connection_type": null, '
-                    '"has_restarted": null}</STATE>\n'
-                    "I see your BrandX has green lights. What error are you getting?\n"
-                    "=== END FORMAT EXAMPLE ===\n\n"
-                    f"CURRENT KNOWN STATE (carry forward and update):\n{state_str}"
-                )
-
-                # Prepare messages for LLM
-                history = sessions[session_id]["messages"][-MAX_HISTORY:]
-                messages = [{"role": "system", "content": system_prompt}]
-                messages.extend(FEW_SHOT_EXAMPLES)
-                messages.extend(history)
-
-                payload = {
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "top_p": 0.8,
-                    "top_k": 20,
-                    "max_tokens": -1,
-                    "stream": False,  # Not streaming for voice
-                }
-
-                # Get LLM response
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.post(
-                        f"{LLAMA_SERVER_URL}/v1/chat/completions",
-                        json=payload
-                    )
-                    response.raise_for_status()
-                    result = response.json()
-
-                ai_response_full = result["choices"][0]["message"]["content"]
-
-                # Extract clean response (remove STATE block)
-                import re
-                match = re.search(r"<STATE>\s*(\{.*?\})\s*</STATE>\s*(.*)", ai_response_full, re.DOTALL)
-                if match:
-                    try:
-                        new_state = json.loads(match.group(1))
-                        if isinstance(new_state, dict):
-                            for key, value in new_state.items():
-                                if value is not None and str(value).strip().lower() not in ("", "null", "none"):
-                                    if key in sessions[session_id]["state"]:
-                                        sessions[session_id]["state"][key] = value
-                        ai_response = match.group(2).strip()
-                    except json.JSONDecodeError:
-                        ai_response = ai_response_full.replace("<STATE>", "").replace("</STATE>", "").strip()
-                else:
-                    ai_response = ai_response_full.replace("<STATE>", "").replace("</STATE>", "").strip()
-
-                # Add AI response to session
-                sessions[session_id]["messages"].append({"role": "assistant", "content": ai_response})
-
-                # Send assistant text immediately so UI stops waiting even if TTS is slow.
-                await websocket.send_json({
-                    "type": "assistant_text",
-                    "text": ai_response,
-                })
-
-                # Step 3: TTS - Convert response to speech
+            if text_payload is not None:
                 try:
-                    # Piper synthesis is blocking/CPU-heavy; run it off the event loop.
-                    audio_bytes = await asyncio.wait_for(
-                        asyncio.to_thread(synthesize_wav_bytes, ai_response),
-                        timeout=20.0,
-                    )
+                    data = json.loads(text_payload)
+                except json.JSONDecodeError:
+                    await websocket.send_json({"type": "error", "error": "Invalid voice control payload."})
+                    continue
 
-                    await websocket.send_bytes(audio_bytes)
+                if data.get("type") == "cancel_current":
+                    if cancel_event is not None:
+                        cancel_event.set()
+                    if current_task is not None and not current_task.done():
+                        current_task.cancel()
+                    await websocket.send_json({"type": "cancelled", "stage": "processing"})
+                    continue
 
-                except asyncio.TimeoutError:
+                await websocket.send_json({"type": "error", "error": "Unknown voice command."})
+                continue
+
+            if bytes_payload is not None:
+                if current_task is not None and not current_task.done():
                     await websocket.send_json({
                         "type": "error",
-                        "error": "TTS generation timed out. Please try a shorter prompt.",
+                        "error": "A voice request is already running. Cancel it before starting another.",
                     })
+                    continue
 
-            except Exception as e:
-                logging.error(f"Voice processing error: {e}")
-                await websocket.send_json({
-                    "type": "error",
-                    "error": f"Voice processing failed: {str(e)}"
-                })
+                cancel_event = asyncio.Event()
+                current_task = asyncio.create_task(process_voice_turn(bytes_payload, cancel_event))
+                continue
 
     except WebSocketDisconnect:
         logging.info("Voice chat WebSocket disconnected")
+    finally:
+        if cancel_event is not None:
+            cancel_event.set()
+        if current_task is not None and not current_task.done():
+            current_task.cancel()
