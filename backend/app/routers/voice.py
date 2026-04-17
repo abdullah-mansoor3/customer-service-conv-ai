@@ -15,7 +15,7 @@ import os
 import tempfile
 import uuid
 import wave
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlretrieve
@@ -25,7 +25,7 @@ from fastapi.responses import Response
 from faster_whisper import WhisperModel
 from piper import PiperVoice
 
-from app.config import LLAMA_SERVER_URL
+from app.orchestration import conversation_orchestrator
 from app.store import DEFAULT_STATE, sessions
 
 router = APIRouter()
@@ -337,90 +337,40 @@ async def voice_chat_websocket(websocket: WebSocket):
             if turn_cancel_event.is_set():
                 return
 
-            # Step 2: Process through LLM (reuse existing chat logic)
-            import httpx
-            import re
-            from app.config import DEFAULT_SYSTEM_PROMPT, FEW_SHOT_EXAMPLES, MAX_HISTORY
-
+            # Step 2: Process through LangGraph orchestrator
             session_id = turn_session_id
             if session_id not in sessions:
                 sessions[session_id] = {
-                    "created_at": datetime.utcnow().isoformat(),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
                     "messages": [],
                     "state": {**DEFAULT_STATE},
                 }
 
-            sessions[session_id]["messages"].append({"role": "user", "content": user_text})
-
-            state_str = json.dumps(sessions[session_id]["state"])
-            system_prompt = (
-                f"{DEFAULT_SYSTEM_PROMPT}\n\n"
-                "/no_think\n\n"
-                "You MUST begin EVERY response with a <STATE> JSON block "
-                "that tracks what you know so far, then a newline, then "
-                "your short reply (1-2 sentences max).\n\n"
-                "The STATE JSON has exactly these 5 keys:\n"
-                "  router_model, lights_status, error_message, connection_type, has_restarted\n"
-                "Use null for anything the user has NOT mentioned yet. "
-                "Only fill a field when the user explicitly states it.\n\n"
-                "=== FORMAT EXAMPLE (not real data, ignore these values) ===\n"
-                "If a user said their BrandX router has green lights:\n"
-                '<STATE>{"router_model": "BrandX", "lights_status": "green", '
-                '"error_message": null, "connection_type": null, '
-                '"has_restarted": null}</STATE>\n'
-                "I see your BrandX has green lights. What error are you getting?\n"
-                "=== END FORMAT EXAMPLE ===\n\n"
-                f"CURRENT KNOWN STATE (carry forward and update):\n{state_str}"
+            await conversation_orchestrator.ensure_thread_state(
+                session_id=session_id,
+                known_state=sessions[session_id]["state"],
+                messages=sessions[session_id]["messages"],
             )
 
-            history = sessions[session_id]["messages"][-MAX_HISTORY:]
-            messages = [{"role": "system", "content": system_prompt}]
-            messages.extend(FEW_SHOT_EXAMPLES)
-            messages.extend(history)
-
-            payload = {
-                "messages": messages,
-                "temperature": 0.7,
-                "top_p": 0.8,
-                "top_k": 20,
-                "max_tokens": -1,
-                "stream": False,
-            }
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{LLAMA_SERVER_URL}/v1/chat/completions",
-                    json=payload,
-                )
-                response.raise_for_status()
-                result = response.json()
+            result = await conversation_orchestrator.run_turn(
+                session_id=session_id,
+                user_message=user_text,
+            )
 
             if turn_cancel_event.is_set():
                 return
 
-            ai_response_full = result["choices"][0]["message"]["content"]
-            match = re.search(r"<STATE>\s*(\{.*?\})\s*</STATE>\s*(.*)", ai_response_full, re.DOTALL)
-
-            if match:
-                try:
-                    new_state = json.loads(match.group(1))
-                    if isinstance(new_state, dict):
-                        for key, value in new_state.items():
-                            if value is not None and str(value).strip().lower() not in ("", "null", "none"):
-                                if key in sessions[session_id]["state"]:
-                                    sessions[session_id]["state"][key] = value
-                    ai_response = match.group(2).strip()
-                    print(
-                        f"✅ Extracted State Update (voice, session={session_id}): "
-                        f"{sessions[session_id]['state']}"
-                    )
-                except json.JSONDecodeError:
-                    ai_response = ai_response_full.replace("<STATE>", "").replace("</STATE>", "").strip()
+            if result.messages:
+                sessions[session_id]["messages"] = result.messages
             else:
-                ai_response = ai_response_full.replace("<STATE>", "").replace("</STATE>", "").strip()
-                print("⚠️  No valid <STATE>{…}</STATE> block found in voice LLM response.")
+                sessions[session_id]["messages"].append({"role": "user", "content": user_text})
+                if result.assistant_text:
+                    sessions[session_id]["messages"].append({"role": "assistant", "content": result.assistant_text})
 
-            sessions[session_id]["messages"].append({"role": "assistant", "content": ai_response})
+            if result.known_state:
+                sessions[session_id]["state"] = result.known_state
+
+            ai_response = result.assistant_text
 
             await websocket.send_json({"type": "assistant_text", "text": ai_response})
             if turn_cancel_event.is_set():
@@ -534,7 +484,7 @@ async def voice_chat_websocket(websocket: WebSocket):
 
                     if selected_session_id not in sessions:
                         sessions[selected_session_id] = {
-                            "created_at": datetime.utcnow().isoformat(),
+                            "created_at": datetime.now(timezone.utc).isoformat(),
                             "messages": [],
                             "state": {**DEFAULT_STATE},
                         }
@@ -557,7 +507,7 @@ async def voice_chat_websocket(websocket: WebSocket):
                     selected_session_id = str(uuid.uuid4())
                     if selected_session_id not in sessions:
                         sessions[selected_session_id] = {
-                            "created_at": datetime.utcnow().isoformat(),
+                            "created_at": datetime.now(timezone.utc).isoformat(),
                             "messages": [],
                             "state": {**DEFAULT_STATE},
                         }

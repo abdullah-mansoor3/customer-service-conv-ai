@@ -18,6 +18,11 @@ for _candidate in [
         break
 
 LLAMA_SERVER_URL: str = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
+LLAMA_MODEL_NAME: str = os.getenv("LLAMA_MODEL_NAME", "local-model")
+LLAMA_API_KEY: str = os.getenv("LLAMA_API_KEY", "not-needed")
+LLAMA_TEMPERATURE: float = float(os.getenv("LLAMA_TEMPERATURE", "0.35"))
+LLAMA_TOP_P: float = float(os.getenv("LLAMA_TOP_P", "0.9"))
+LLAMA_TIMEOUT_SEC: float = float(os.getenv("LLAMA_TIMEOUT_SEC", "90"))
 
 DEFAULT_SYSTEM_PROMPT: str = os.getenv(
     "SYSTEM_PROMPT",

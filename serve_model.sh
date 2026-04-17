@@ -45,35 +45,104 @@ if ! command_exists "$LLAMA_SERVER"; then
     fi
 fi
 
-# Detect number of physical cores for efficient CPU inference
+# Snapshot help text once so we can conditionally use newer flags.
+LLAMA_HELP_TEXT="$($LLAMA_SERVER --help 2>/dev/null || true)"
+supports_flag() {
+    local flag="$1"
+    echo "$LLAMA_HELP_TEXT" | grep -q -- "$flag"
+}
+
+cpu_model_name() {
+    if command_exists "lscpu"; then
+        lscpu | awk -F: '/Model name/ {gsub(/^[[:space:]]+/, "", $2); print $2; exit}'
+        return
+    fi
+    echo ""
+}
+
+detect_physical_cores() {
+    local os_name
+    os_name="$(uname -s)"
+    if [ "$os_name" = "Linux" ] && command_exists "lscpu"; then
+        lscpu -p=core,socket | grep -v '^#' | sort -u | wc -l
+        return
+    fi
+
+    if [[ "$os_name" == "MINGW"* ]] || [[ "$os_name" == "MSYS"* ]] || [[ "$os_name" == "CYGWIN"* ]]; then
+        echo "$NUMBER_OF_PROCESSORS"
+        return
+    fi
+
+    echo "4"
+}
+
+detect_logical_cores() {
+    if command_exists "getconf"; then
+        getconf _NPROCESSORS_ONLN
+        return
+    fi
+    if command_exists "nproc"; then
+        nproc
+        return
+    fi
+    echo "8"
+}
+
+# Detect number of cores for efficient CPU inference.
+CPU_MODEL="$(cpu_model_name)"
+IS_GEN12_I7=0
+if echo "$CPU_MODEL" | grep -Ei '12th Gen Intel.*Core.*i7|i7-12[0-9]{3}' >/dev/null 2>&1; then
+    IS_GEN12_I7=1
+fi
+
 if [ -n "$LLAMA_THREADS" ]; then
     THREADS=$LLAMA_THREADS
     echo "Using LLAMA_THREADS=$THREADS from .env settings."
 else
-    OS="$(uname -s)"
-    if [ "$OS" = "Linux" ]; then
-        # Get physical cores on Linux to avoid hyperthreading contention
-        THREADS=$(lscpu -p | grep -v '^#' | sort -u -t, -k 2,4 | wc -l)
-    elif [[ "$OS" == "MINGW"* ]] || [[ "$OS" == "MSYS"* ]] || [[ "$OS" == "CYGWIN"* ]]; then
-        # Windows native or via bash
-        THREADS=$NUMBER_OF_PROCESSORS
-    else
-        THREADS=4 # Fallback
-    fi
+    PHYSICAL_CORES="$(detect_physical_cores)"
+    THREADS="$PHYSICAL_CORES"
 
-    # Ensure THREADS is a valid number, fallback to 4 if detection fails
+    # Ensure THREADS is a valid number, fallback to 4 if detection fails.
     if ! [[ "$THREADS" =~ ^[0-9]+$ ]]; then
         THREADS=4
     fi
-    echo "Detected $THREADS physical CPU cores. Using this for inference threads."
+
+    # Alder Lake i7 is hybrid (P+E cores). For token latency, cap generation
+    # threads to a P-core-friendly value unless user overrides explicitly.
+    if [ "$IS_GEN12_I7" -eq 1 ] && [ "$THREADS" -gt 8 ]; then
+        THREADS=8
+    fi
+
+    echo "Auto thread tuning -> model='$CPU_MODEL', generation threads=$THREADS"
 fi
 
 if [ -n "$LLAMA_BATCH_THREADS" ]; then
     BATCH_THREADS=$LLAMA_BATCH_THREADS
     echo "Using LLAMA_BATCH_THREADS=$BATCH_THREADS for prompt evaluation."
 else
-    BATCH_THREADS=$THREADS
+    LOGICAL_CORES="$(detect_logical_cores)"
+    if ! [[ "$LOGICAL_CORES" =~ ^[0-9]+$ ]]; then
+        LOGICAL_CORES=$THREADS
+    fi
+
+    if [ "$IS_GEN12_I7" -eq 1 ]; then
+        # Use a few extra threads for prompt/batch work while keeping token
+        # generation pinned to a lower-latency thread count.
+        BATCH_THREADS=$((THREADS + 4))
+        if [ "$BATCH_THREADS" -gt "$LOGICAL_CORES" ]; then
+            BATCH_THREADS=$LOGICAL_CORES
+        fi
+    else
+        BATCH_THREADS=$THREADS
+    fi
 fi
+
+CTX_SIZE="${LLAMA_CTX_SIZE:-2048}"
+BATCH_SIZE="${LLAMA_BATCH_SIZE:-512}"
+UBATCH_SIZE="${LLAMA_UBATCH_SIZE:-128}"
+PARALLEL_SLOTS="${LLAMA_PARALLEL_SLOTS:-2}"
+HTTP_THREADS="${LLAMA_HTTP_THREADS:-4}"
+POLL_LEVEL="${LLAMA_POLL_LEVEL:-0}"
 
 # Dynamically infer the chat template based on the model filename
 MODEL_BASENAME=$(basename "$MODEL_PATH" | tr '[:upper:]' '[:lower:]')
@@ -115,25 +184,42 @@ case "$MODEL_BASENAME" in
         ;;
 esac
 
-# llama.cpp server flags for efficient CPU inference:
-# -m: Model path (loaded from .env)
-# -c: Context size (2048 is a safe default, adjust as needed)
-# -t: Number of threads for generation (optimally set to physical cores)
-# -tb: Number of threads for prompt processing (batch processing)
-# -b: Batch size for prompt processing
-# --mlock: Force system to keep model in RAM (optional, uncomment if you have enough RAM and want to avoid swapping)
+# llama.cpp server flags for efficient CPU inference.
+CMD="$LLAMA_SERVER -m \"$MODEL_PATH\" -c $CTX_SIZE -t $THREADS -tb $BATCH_THREADS -b $BATCH_SIZE"
 
-CMD="$LLAMA_SERVER -m \"$MODEL_PATH\" -c 2048 -t $THREADS -tb $BATCH_THREADS -b 512"
+if supports_flag --ubatch-size || supports_flag --ubatch; then
+    CMD="$CMD -ub $UBATCH_SIZE"
+fi
 
-if [ -n "$CHAT_TEMPLATE" ]; then
+if supports_flag --parallel; then
+    CMD="$CMD -np $PARALLEL_SLOTS"
+fi
+
+if supports_flag --threads-http; then
+    CMD="$CMD --threads-http $HTTP_THREADS"
+fi
+
+if supports_flag --poll; then
+    CMD="$CMD --poll $POLL_LEVEL"
+fi
+
+if supports_flag --cache-prompt; then
+    CMD="$CMD --cache-prompt"
+fi
+
+if [ "${LLAMA_MLOCK:-0}" = "1" ] && supports_flag --mlock; then
+    CMD="$CMD --mlock"
+fi
+
+if [ -n "$CHAT_TEMPLATE" ] && supports_flag --chat-template; then
     echo "Detected template heuristics. Forcing chat template: $CHAT_TEMPLATE"
     CMD="$CMD --chat-template $CHAT_TEMPLATE"
 else
     echo "No explicit chat template heuristic matched (or relying on auto-detect). Letting llama-server read embedded metadata."
 fi
 
-# Uncomment the following line to enable mlock for potentially better performance
-# CMD="$CMD --mlock"
+echo "Runtime tuning: ctx=$CTX_SIZE, batch=$BATCH_SIZE, ubatch=$UBATCH_SIZE, parallel_slots=$PARALLEL_SLOTS"
+echo "CPU tuning: threads=$THREADS, batch_threads=$BATCH_THREADS, http_threads=$HTTP_THREADS, poll=$POLL_LEVEL"
 
 echo "Executing: $CMD"
 eval "$CMD"

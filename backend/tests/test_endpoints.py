@@ -15,14 +15,19 @@ Run with:
 """
 
 import json
-from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 # ── App import ─────────────────────────────────────────────────────────────
 from app.main import app
+from app.orchestration import conversation_orchestrator
+from app.orchestration.langgraph_engine import (
+    AgentTurnResult,
+    extract_visible_response_text,
+    parse_state_block,
+)
 from app.store import DEFAULT_STATE, sessions
 
 # ── Fixtures ───────────────────────────────────────────────────────────────
@@ -31,8 +36,10 @@ from app.store import DEFAULT_STATE, sessions
 @pytest.fixture(autouse=True)
 def clear_sessions():
     """Wipe the in-memory session store before every test."""
+    conversation_orchestrator.reset_memory()
     sessions.clear()
     yield
+    conversation_orchestrator.reset_memory()
     sessions.clear()
 
 
@@ -212,58 +219,24 @@ class TestDeleteSession:
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def _make_sse_lines(content: str) -> list[str]:
-    """
-    Build a minimal list of SSE lines that mimic llama-server streaming
-    a single assistant turn with a STATE block followed by a reply.
-    """
-    payload = {
-        "choices": [{"delta": {"content": content}, "finish_reason": None}]
-    }
-    return [
-        f"data: {json.dumps(payload)}",
-        "data: [DONE]",
-    ]
+def _fake_orchestrator_stream(content: str):
+    """Build an async generator that mimics LangGraph token + final events."""
+    parsed_state, assistant_text = parse_state_block(content)
 
+    async def _stream(*_args, **_kwargs):
+        if assistant_text:
+            yield {"type": "token", "token": assistant_text}
+        yield {
+            "type": "final",
+            "result": AgentTurnResult(
+                route="dialogue",
+                raw_response=content,
+                assistant_text=assistant_text,
+                state_update=parsed_state,
+            ),
+        }
 
-class _FakeStreamResponse:
-    """
-    Minimal async context-manager that mimics httpx streaming response.
-    """
-
-    def __init__(self, lines: list[str], status_code: int = 200):
-        self._lines = lines
-        self.status_code = status_code
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise Exception(f"HTTP {self.status_code}")
-
-    async def aiter_lines(self):
-        for line in self._lines:
-            yield line
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_):
-        pass
-
-
-class _FakeAsyncClient:
-    """Replaces httpx.AsyncClient so no real network calls are made."""
-
-    def __init__(self, lines: list[str]):
-        self._lines = lines
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_):
-        pass
-
-    def stream(self, method, url, **kwargs):
-        return _FakeStreamResponse(self._lines)
+    return _stream
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -274,13 +247,15 @@ class _FakeAsyncClient:
 class TestWebSocketChat:
     # ── helper ─────────────────────────────────────────────────────────────
 
-    def _chat(self, client, payload: dict, sse_lines: list[str]) -> list[dict]:
+    def _chat(self, client, payload: dict, content: str) -> list[dict]:
         """
         Open the WebSocket, send one message, collect all received frames
         until the server sends done=True or an error frame, then return them.
         """
-        with patch("app.routers.chat.httpx.AsyncClient") as MockClient:
-            MockClient.return_value = _FakeAsyncClient(sse_lines)
+        with patch(
+            "app.routers.chat.conversation_orchestrator.stream_turn_events",
+            new=_fake_orchestrator_stream(content),
+        ):
             with client.websocket_connect("/ws/chat") as ws:
                 ws.send_text(json.dumps(payload))
                 frames = []
@@ -297,41 +272,62 @@ class TestWebSocketChat:
     # ── basic flow ─────────────────────────────────────────────────────────
 
     def test_ws_sends_session_id_frame(self, client):
-        lines = _make_sse_lines("Hello!")
-        frames = self._chat(client, {"message": "hi"}, lines)
+        frames = self._chat(client, {"message": "hi"}, "Hello!")
         types = [f["type"] for f in frames]
         assert "session_id" in types
 
     def test_ws_sends_done_frame(self, client):
-        lines = _make_sse_lines("Hello!")
-        frames = self._chat(client, {"message": "hi"}, lines)
+        frames = self._chat(client, {"message": "hi"}, "Hello!")
         done_frames = [f for f in frames if f.get("done") is True]
+        assert len(done_frames) == 1
+
+    def test_ws_sends_done_on_visible_done_event(self, client):
+        async def _stream(*_args, **_kwargs):
+            yield {"type": "token", "token": "Hello"}
+            yield {"type": "visible_done"}
+            yield {
+                "type": "final",
+                "result": AgentTurnResult(
+                    route="dialogue",
+                    raw_response="Hello",
+                    assistant_text="Hello",
+                    state_update={},
+                ),
+            }
+
+        with patch("app.routers.chat.conversation_orchestrator.stream_turn_events", new=_stream):
+            with client.websocket_connect("/ws/chat") as ws:
+                ws.send_text(json.dumps({"message": "hi"}))
+                frames = []
+                while True:
+                    frame = json.loads(ws.receive_text())
+                    frames.append(frame)
+                    if frame.get("type") == "token" and frame.get("done"):
+                        break
+
+        done_frames = [f for f in frames if f.get("type") == "token" and f.get("done") is True]
         assert len(done_frames) == 1
 
     def test_ws_respects_provided_session_id(self, client):
         sid = client.post("/api/sessions").json()["session_id"]
-        lines = _make_sse_lines("Sure, I can help.")
-        frames = self._chat(client, {"message": "hello", "session_id": sid}, lines)
+        frames = self._chat(client, {"message": "hello", "session_id": sid}, "Sure, I can help.")
         id_frame = next(f for f in frames if f.get("type") == "session_id")
         assert id_frame["session_id"] == sid
 
     def test_ws_creates_new_session_when_none_given(self, client):
-        lines = _make_sse_lines("Hi there!")
-        frames = self._chat(client, {"message": "hello"}, lines)
+        frames = self._chat(client, {"message": "hello"}, "Hi there!")
         id_frame = next(f for f in frames if f.get("type") == "session_id")
         assert id_frame["session_id"] in sessions
 
     def test_ws_appends_user_message_to_history(self, client):
         sid = client.post("/api/sessions").json()["session_id"]
-        lines = _make_sse_lines("Got it.")
-        self._chat(client, {"message": "my router is broken", "session_id": sid}, lines)
+        self._chat(client, {"message": "my router is broken", "session_id": sid}, "Got it.")
         user_msgs = [m for m in sessions[sid]["messages"] if m["role"] == "user"]
         assert any("router" in m["content"] for m in user_msgs)
 
     def test_ws_appends_assistant_message_to_history(self, client):
         sid = client.post("/api/sessions").json()["session_id"]
-        lines = _make_sse_lines("Let me help you with that.")
-        self._chat(client, {"message": "hi", "session_id": sid}, lines)
+        self._chat(client, {"message": "hi", "session_id": sid}, "Let me help you with that.")
         asst_msgs = [m for m in sessions[sid]["messages"] if m["role"] == "assistant"]
         assert len(asst_msgs) == 1
 
@@ -345,8 +341,7 @@ class TestWebSocketChat:
             '"has_restarted": null}</STATE>\n'
             "Thanks for that info!"
         )
-        lines = _make_sse_lines(content)
-        self._chat(client, {"message": "TP-Link wifi", "session_id": sid}, lines)
+        self._chat(client, {"message": "TP-Link wifi", "session_id": sid}, content)
         assert sessions[sid]["state"]["router_model"] == "TP-Link"
         assert sessions[sid]["state"]["connection_type"] == "wifi"
 
@@ -358,8 +353,7 @@ class TestWebSocketChat:
             '"error_message": null, "connection_type": null, '
             '"has_restarted": null}</STATE>\nOkay!'
         )
-        lines = _make_sse_lines(content)
-        self._chat(client, {"message": "follow-up", "session_id": sid}, lines)
+        self._chat(client, {"message": "follow-up", "session_id": sid}, content)
         # null from LLM must NOT overwrite the already-known value
         assert sessions[sid]["state"]["router_model"] == "Netgear"
 
@@ -370,8 +364,7 @@ class TestWebSocketChat:
             '"error_message": null, "connection_type": null, '
             '"has_restarted": null}</STATE>\nI can help!'
         )
-        lines = _make_sse_lines(content)
-        frames = self._chat(client, {"message": "ASUS router", "session_id": sid}, lines)
+        frames = self._chat(client, {"message": "ASUS router", "session_id": sid}, content)
         token_text = "".join(
             f.get("token", "")
             for f in frames
@@ -383,40 +376,30 @@ class TestWebSocketChat:
     # ── error handling ──────────────────────────────────────────────────────
 
     def test_ws_error_on_invalid_json(self, client):
-        with patch("app.routers.chat.httpx.AsyncClient"):
-            with client.websocket_connect("/ws/chat") as ws:
-                ws.send_text("not valid json at all")
-                frame = json.loads(ws.receive_text())
-                assert frame["type"] == "error"
+        with client.websocket_connect("/ws/chat") as ws:
+            ws.send_text("not valid json at all")
+            frame = json.loads(ws.receive_text())
+            assert frame["type"] == "error"
 
     def test_ws_error_on_empty_message(self, client):
-        with patch("app.routers.chat.httpx.AsyncClient"):
-            with client.websocket_connect("/ws/chat") as ws:
-                ws.send_text(json.dumps({"message": "   "}))
-                frame = json.loads(ws.receive_text())
-                assert frame["type"] == "error"
+        with client.websocket_connect("/ws/chat") as ws:
+            ws.send_text(json.dumps({"message": "   "}))
+            frame = json.loads(ws.receive_text())
+            assert frame["type"] == "error"
 
     def test_ws_error_on_missing_message_field(self, client):
-        with patch("app.routers.chat.httpx.AsyncClient"):
-            with client.websocket_connect("/ws/chat") as ws:
-                ws.send_text(json.dumps({"session_id": "abc"}))
-                frame = json.loads(ws.receive_text())
-                assert frame["type"] == "error"
+        with client.websocket_connect("/ws/chat") as ws:
+            ws.send_text(json.dumps({"session_id": "abc"}))
+            frame = json.loads(ws.receive_text())
+            assert frame["type"] == "error"
 
     def test_ws_error_on_llm_server_unreachable(self, client):
-        import httpx
+        async def _broken_stream(*_args, **_kwargs):
+            raise RuntimeError("unreachable")
+            if False:  # pragma: no cover
+                yield {}
 
-        with patch("app.routers.chat.httpx.AsyncClient") as MockClient:
-            # Make the stream() call raise a RequestError
-            mock_instance = MagicMock()
-            mock_cm = MagicMock()
-            mock_cm.__aenter__ = AsyncMock(side_effect=httpx.RequestError("unreachable"))
-            mock_cm.__aexit__ = AsyncMock(return_value=False)
-            mock_instance.stream.return_value = mock_cm
-            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
-            mock_instance.__aexit__ = AsyncMock(return_value=False)
-            MockClient.return_value = mock_instance
-
+        with patch("app.routers.chat.conversation_orchestrator.stream_turn_events", new=_broken_stream):
             with client.websocket_connect("/ws/chat") as ws:
                 ws.send_text(json.dumps({"message": "hello"}))
                 # Skip the session_id frame if it arrives before the error
@@ -429,3 +412,29 @@ class TestWebSocketChat:
                         break
                 error_frames = [f for f in frames if f.get("type") == "error"]
                 assert len(error_frames) == 1
+
+
+class TestStateVisibility:
+    def test_parse_state_block_from_trailing_state(self):
+        raw = (
+            'I can help.\n'
+            '<STATE>{"router_model": "ASUS", "lights_status": null, '
+            '"error_message": null, "connection_type": "wifi", '
+            '"has_restarted": null}</STATE>'
+        )
+        parsed, clean = parse_state_block(raw)
+        assert parsed["router_model"] == "ASUS"
+        assert parsed["connection_type"] == "wifi"
+        assert clean == "I can help."
+
+    def test_visible_text_hides_partial_trailing_state_prefix(self):
+        partial = "I can help with that issue.\n<ST"
+        assert extract_visible_response_text(partial, final=False) == "I can help with that issue.\n"
+
+    def test_visible_text_removes_trailing_state_block(self):
+        raw = 'I can help.\n<STATE>{"router_model": "ASUS"}</STATE>'
+        assert extract_visible_response_text(raw, final=False) == "I can help."
+
+    def test_visible_text_passthrough_when_no_state_prefix(self):
+        raw = "Hello there"
+        assert extract_visible_response_text(raw, final=False) == "Hello there"
