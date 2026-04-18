@@ -61,8 +61,8 @@ services:
   # ── Backend ──────────────────────────────────────────────────────────────
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: conv-ai-backend
     ports:
       - "8000:8000"
@@ -80,6 +80,8 @@ services:
     # Volume mount for hot-reload during development — remove in production
     volumes:
       - ./backend/app:/app/app:z
+      - ./rag:/app/rag:z
+      - ./rag_data:/app/rag_data:ro,z
       - ./models:/models:ro,z    # Mount models directory including voice models
     restart: unless-stopped
     networks:

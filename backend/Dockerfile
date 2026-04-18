@@ -2,11 +2,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY backend/requirements.txt ./backend-requirements.txt
+COPY rag/requirements.txt ./rag-requirements.txt
 RUN pip install --no-cache-dir --upgrade pip \
- && pip install --no-cache-dir -r requirements.txt
+ && pip install --no-cache-dir -r backend-requirements.txt -r rag-requirements.txt
 
-COPY app/ ./app/
+COPY backend/app/ ./app/
+COPY rag/ ./rag/
+COPY rag_data/ ./rag_data/
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1

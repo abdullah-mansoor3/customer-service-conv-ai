@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Annotated, Any, AsyncIterator, TypedDict, cast
 
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -36,6 +36,7 @@ from app.config import (
     LLAMA_TOP_P,
     MAX_HISTORY,
 )
+from app.orchestration.tools import RETRIEVE_ISP_KNOWLEDGE_TOOL_SPEC, retrieve_isp_knowledge
 from app.store import DEFAULT_STATE
 
 
@@ -90,6 +91,9 @@ def build_state_prompt(known_state: dict[str, Any], *, emit_state_block: bool = 
     return (
         f"{DEFAULT_SYSTEM_PROMPT}\n\n"
         "/no_think\n\n"
+        "You may call the tool retrieve_isp_knowledge for factual ISP questions "
+        "(troubleshooting steps, device/router details, setup guides, ISP-specific procedures).\n"
+        "Do not call tools for greetings, chit-chat, or purely personal opinions.\n\n"
         "Respond first with your short reply (1-2 sentences max).\n"
         "Then append a newline and a <STATE> JSON block at the END "
         "of EVERY response.\n\n"
@@ -177,7 +181,7 @@ class ConversationOrchestrator:
 
     def __init__(self) -> None:
         self._checkpointer = InMemorySaver()
-        self._llm = ChatOpenAI(
+        base_llm = ChatOpenAI(
             model=LLAMA_MODEL_NAME,
             api_key=LLAMA_API_KEY,
             base_url=f"{LLAMA_SERVER_URL.rstrip('/')}/v1",
@@ -186,7 +190,67 @@ class ConversationOrchestrator:
             timeout=LLAMA_TIMEOUT_SEC,
             max_retries=0,
         )
+        self._llm = base_llm
+        self._tool_llm = base_llm.bind_tools([RETRIEVE_ISP_KNOWLEDGE_TOOL_SPEC])
+        self._tools_by_name = {
+            "retrieve_isp_knowledge": retrieve_isp_knowledge,
+        }
         self._graph = self._build_graph()
+
+    @staticmethod
+    def _latest_user_message_text(state: GraphConversationState) -> str:
+        messages = state.get("messages", [])
+        for message in reversed(messages):
+            if not isinstance(message, HumanMessage):
+                continue
+
+            content = message.content
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                parts: list[str] = []
+                for item in content:
+                    if isinstance(item, str):
+                        parts.append(item)
+                    elif isinstance(item, dict):
+                        maybe_text = item.get("text") or item.get("content")
+                        if isinstance(maybe_text, str):
+                            parts.append(maybe_text)
+                return "".join(parts)
+            return str(content)
+        return ""
+
+    @staticmethod
+    def _is_rag_candidate_query(query: str) -> bool:
+        text = query.strip().lower()
+        if not text:
+            return False
+
+        rag_keywords = {
+            "troubleshoot",
+            "troubleshooting",
+            "router",
+            "modem",
+            "wifi",
+            "internet",
+            "fiber",
+            "ethernet",
+            "error",
+            "guide",
+            "setup",
+            "configure",
+            "manual",
+            "restart",
+            "disconnect",
+            "latency",
+            "packet",
+            "speed",
+            "ping",
+            "signal",
+            "onu",
+            "ont",
+        }
+        return any(keyword in text for keyword in rag_keywords)
 
     @staticmethod
     def _thread_config(session_id: str) -> dict[str, dict[str, str]]:
@@ -441,52 +505,97 @@ class ConversationOrchestrator:
 
         async def dialogue_node(state: GraphConversationState) -> GraphConversationState:
             writer = get_stream_writer()
-            llm_messages = self._to_langchain_messages(state)
             emit_state_block = bool(state.get("emit_state_block", True))
             hidden_markers = ["<STATE>", "</STATE>"]
             stop_sequences = None if emit_state_block else hidden_markers
             state_open_tag = "<STATE>"
 
-            raw_response = ""
-            last_visible_text = ""
-            visible_done_sent = False
-            async for chunk in self._llm.astream(llm_messages, stop=stop_sequences):
-                text = self._extract_chunk_text(chunk)
-                if not text:
-                    continue
-                raw_response += text
+            async def _stream_final_response(messages: list[BaseMessage]) -> str:
+                raw_response = ""
+                last_visible_text = ""
+                visible_done_sent = False
 
-                if not emit_state_block:
-                    cut_indices = [raw_response.find(marker) for marker in hidden_markers if marker in raw_response]
-                    first_cut = min(cut_indices) if cut_indices else -1
-                    if first_cut != -1:
-                        # In low-latency mode we stop as soon as hidden markup
-                        # starts, so the UI is not blocked by invisible tail tokens.
-                        raw_response = raw_response[:first_cut].rstrip()
-                        if writer is not None and len(raw_response) > len(last_visible_text):
-                            delta = raw_response[len(last_visible_text):]
+                async for chunk in self._llm.astream(messages, stop=stop_sequences):
+                    text = self._extract_chunk_text(chunk)
+                    if not text:
+                        continue
+                    raw_response += text
+
+                    if not emit_state_block:
+                        cut_indices = [raw_response.find(marker) for marker in hidden_markers if marker in raw_response]
+                        first_cut = min(cut_indices) if cut_indices else -1
+                        if first_cut != -1:
+                            raw_response = raw_response[:first_cut].rstrip()
+                            if writer is not None and len(raw_response) > len(last_visible_text):
+                                delta = raw_response[len(last_visible_text):]
+                                if delta:
+                                    writer({"type": "token", "token": delta})
+                                last_visible_text = raw_response
+                            break
+
+                    if writer is not None:
+                        visible_text = extract_visible_response_text(raw_response, final=False)
+                        if len(visible_text) > len(last_visible_text):
+                            delta = visible_text[len(last_visible_text):]
                             if delta:
                                 writer({"type": "token", "token": delta})
-                            last_visible_text = raw_response
-                        break
+                            last_visible_text = visible_text
 
-                if writer is not None:
-                    visible_text = extract_visible_response_text(raw_response, final=False)
-                    if len(visible_text) > len(last_visible_text):
-                        delta = visible_text[len(last_visible_text):]
-                        if delta:
-                            writer({"type": "token", "token": delta})
-                        last_visible_text = visible_text
+                        if not visible_done_sent and state_open_tag in raw_response:
+                            writer({"type": "visible_done"})
+                            visible_done_sent = True
 
-                    if not visible_done_sent and state_open_tag in raw_response:
-                        # Visible answer is complete once trailing STATE starts.
-                        writer({"type": "visible_done"})
-                        visible_done_sent = True
+                if writer is not None and not visible_done_sent:
+                    writer({"type": "visible_done"})
 
-            if writer is not None and not visible_done_sent:
-                # Tell the transport layer the visible answer is complete.
-                writer({"type": "visible_done"})
+                return raw_response
 
+            llm_messages = self._to_langchain_messages(state)
+            latest_user_text = self._latest_user_message_text(state)
+            use_rag_tooling = self._is_rag_candidate_query(latest_user_text)
+
+            if not use_rag_tooling:
+                raw_response = await _stream_final_response(llm_messages)
+                return {"raw_response": raw_response}
+
+            tool_context_messages = list(llm_messages)
+            max_tool_rounds = 2
+            for _ in range(max_tool_rounds):
+                decision = await self._tool_llm.ainvoke(tool_context_messages)
+                assistant_decision = cast(AIMessage, decision)
+                tool_calls = assistant_decision.tool_calls or []
+                if not tool_calls:
+                    break
+
+                tool_context_messages.append(assistant_decision)
+                for tool_call in tool_calls:
+                    tool_name = str(tool_call.get("name", ""))
+                    tool_id = str(tool_call.get("id", ""))
+                    tool_args = tool_call.get("args", {})
+                    selected_tool = self._tools_by_name.get(tool_name)
+
+                    if selected_tool is None:
+                        tool_output = f"Tool not available: {tool_name}"
+                    else:
+                        try:
+                            if isinstance(tool_args, dict):
+                                tool_output = selected_tool(str(tool_args.get("query", "")))
+                            elif isinstance(tool_args, str):
+                                tool_output = selected_tool(tool_args)
+                            else:
+                                tool_output = selected_tool(str(tool_args))
+                        except Exception as exc:  # noqa: BLE001
+                            tool_output = f"Tool execution failed: {exc}"
+
+                    tool_context_messages.append(
+                        ToolMessage(
+                            content=str(tool_output),
+                            tool_call_id=tool_id,
+                            name=tool_name or None,
+                        )
+                    )
+
+            raw_response = await _stream_final_response(tool_context_messages)
             return {"raw_response": raw_response}
 
         async def parse_state_node(state: GraphConversationState) -> GraphConversationState:

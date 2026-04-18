@@ -25,6 +25,7 @@ No cloud APIs, no data ever leaves your machine. Models run on CPU via **llama.c
 16. [Tests](#16-tests)
 17. [Model Download — Qwen3.5-0.8B](#17-model-download--qwen350-8b)
 18. [Standalone RAG Module](#18-standalone-rag-module)
+19. [LangGraph RAG Tool Calling Integration](#19-langgraph-rag-tool-calling-integration)
 
 ---
 
@@ -436,6 +437,8 @@ cp .env.example .env
 docker compose up --build
 ```
 
+> Backend image now installs both `backend/requirements.txt` and `rag/requirements.txt`, and includes `rag/` + `rag_data/` so LangGraph tool-calling can execute RAG inside Docker.
+
 The first run downloads the llama-server Docker image (~600 MB) and builds the backend and frontend images. Subsequent starts are fast.
 
 | URL | Service |
@@ -643,7 +646,7 @@ MODEL_PATH=/models/Qwen3.5-0.8B-Q4_K_M.gguf
 
 ## 18. Standalone RAG Module
 
-This repo now includes a separate RAG pipeline in [rag/README.md](rag/README.md), intentionally decoupled from chatbot wiring for independent evaluation.
+This repo includes a separate RAG pipeline in [rag/README.md](rag/README.md), and it is also wired into the backend orchestration as a LangChain tool (`retrieve_isp_knowledge`) for factual ISP support queries.
 
 Quick start:
 
@@ -659,3 +662,23 @@ Quick start:
 ```
 
 For full pipeline logic (chunking, metadata filtering, reranking, context compression, cache, and all CLI flags), use [rag/README.md](rag/README.md).
+
+## 19. LangGraph RAG Tool Calling Integration
+
+The backend orchestrator now supports conditional tool-calling with LangGraph/LangChain:
+
+- The graph flow remains `START -> route -> dialogue -> parse_state -> END`.
+- In `dialogue`, the model is bound to a function tool named `retrieve_isp_knowledge`.
+- Tooling is only attempted for RAG-like queries (e.g., troubleshooting/device/setup/error intent), not greetings/chit-chat.
+- If the model issues a tool call, backend executes retrieval via `rag.inference.RAGEngine`, appends a `ToolMessage`, and asks the model for the final user-facing response.
+- `<STATE>...</STATE>` extraction and merge logic is unchanged.
+
+Key files:
+
+- [backend/app/orchestration/langgraph_engine.py](backend/app/orchestration/langgraph_engine.py)
+- [backend/app/orchestration/tools/rag_tool.py](backend/app/orchestration/tools/rag_tool.py)
+
+Notes:
+
+- RAG engine initialization is lazy (first tool call), so normal conversation startup remains fast.
+- If RAG dependencies are missing outside Docker, the tool returns a graceful "RAG retrieval unavailable" message instead of crashing the turn.
