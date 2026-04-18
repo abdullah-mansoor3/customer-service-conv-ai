@@ -1,3 +1,7 @@
+rag_data/
+rag/chroma_store/
+
+
 # Python
 __pycache__/
 *.py[cod]

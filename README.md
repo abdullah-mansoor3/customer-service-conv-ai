@@ -24,6 +24,7 @@ No cloud APIs, no data ever leaves your machine. Models run on CPU via **llama.c
 15. [Voice Model Download](#15-voice-model-download)
 16. [Tests](#16-tests)
 17. [Model Download — Qwen3.5-0.8B](#17-model-download--qwen350-8b)
+18. [Standalone RAG Module](#18-standalone-rag-module)
 
 ---
 
@@ -637,3 +638,24 @@ MODEL_PATH=/models/Qwen3.5-0.8B-Q4_K_M.gguf
 ```
 
 > Use the exact filename you downloaded. The path is always `/models/<filename>` inside the container — the `./models/` folder on your host is mounted at `/models` in Docker.
+
+---
+
+## 18. Standalone RAG Module
+
+This repo now includes a separate RAG pipeline in [rag/README.md](rag/README.md), intentionally decoupled from chatbot wiring for independent evaluation.
+
+Quick start:
+
+```bash
+# install rag-specific dependencies
+/opt/miniconda3/bin/python -m pip install -r rag/requirements.txt
+
+# build vector index from ./rag_data
+/opt/miniconda3/bin/python -m rag.ingest --reset
+
+# test retrieval quality (no llm call)
+/opt/miniconda3/bin/python -m rag.inference "My Nayatel connection keeps dropping" --no-llm --json
+```
+
+For full pipeline logic (chunking, metadata filtering, reranking, context compression, cache, and all CLI flags), use [rag/README.md](rag/README.md).
