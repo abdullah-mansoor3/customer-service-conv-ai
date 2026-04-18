@@ -3,6 +3,56 @@ import asyncio
 from crm.crm_store import get_user, create_or_get_user, update_user
 from mcp_server.tools.integrations import call_crm_bridge
 
+# ── Tool schemas (pass these to your LLM's tool/function list) ───────────────
+
+CRM_TOOLS = [
+    {
+        "name": "get_user_info",
+        "description": (
+            "Retrieve stored information about the current user, including their name, "
+            "contact details, preferences, and recent interaction history."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "user_id": {
+                    "type": "string",
+                    "description": "The unique session or user identifier."
+                }
+            },
+            "required": ["user_id"]
+        }
+    },
+    {
+        "name": "update_user_info",
+        "description": (
+            "Store or update a specific piece of information about the user, such as "
+            "their name, contact number, or a preference (e.g. preferred language, "
+            "appointment time, dietary restriction)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "user_id": {
+                    "type": "string",
+                    "description": "The unique session or user identifier."
+                },
+                "field": {
+                    "type": "string",
+                    "description": (
+                        "The field to update. Use 'name' for the user's name, "
+                        "'contact' for phone/email, or any custom preference key."
+                    )
+                },
+                "value": {
+                    "description": "The value to store for the given field."
+                }
+            },
+            "required": ["user_id", "field", "value"]
+        }
+    }
+]
+
 async def execute_crm_tool(tool_name: str, arguments: dict) -> str:
     """
     Tries the MCP bridge first. Falls back to local store if bridge
