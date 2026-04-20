@@ -1,5 +1,12 @@
 import json
-from crm.crm_store import get_user, create_or_get_user, update_user
+import asyncio
+
+from app.crm.crm_store import create_or_get_user, get_user, update_user
+
+try:
+    from mcp_server.tools.integrations import call_crm_bridge
+except Exception:  # noqa: BLE001
+    call_crm_bridge = None
 
 # ── Tool schemas (pass these to your LLM's tool/function list) ───────────────
 
@@ -55,17 +62,34 @@ CRM_TOOLS = [
 
 async def execute_crm_tool(tool_name: str, arguments: dict) -> str:
     """
-    Called by your Tool Orchestrator when the LLM requests a CRM tool.
-    Always returns a plain string the LLM can read.
+    Try bridge integration first when available, then use local fallback.
     """
+    if call_crm_bridge is not None:
+        bridge_result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            call_crm_bridge,
+            tool_name,
+            arguments,
+        )
+
+        if bridge_result.get("ok"):
+            return json.dumps(bridge_result.get("data", {}), indent=2)
+
+        if bridge_result.get("status") not in {"not_configured", None}:
+            print(f"[CRM bridge error] {bridge_result.get('message')} — using local fallback")
+
+    return await _execute_local(tool_name, arguments)
+
+
+async def _execute_local(tool_name: str, arguments: dict) -> str:
+    """Local JSON-file CRM fallback."""
     try:
         if tool_name == "get_user_info":
             user_id = arguments["user_id"]
             user = get_user(user_id)
             if user is None:
                 user = create_or_get_user(user_id)
-                return "No prior record found for this user. A new profile has been created."
-            # Return a clean summary (exclude raw history to save tokens)
+                return "No prior record found. A new profile has been created."
             summary = {
                 "name": user.get("name"),
                 "contact": user.get("contact"),
@@ -77,8 +101,8 @@ async def execute_crm_tool(tool_name: str, arguments: dict) -> str:
 
         elif tool_name == "update_user_info":
             user_id = arguments["user_id"]
-            field = arguments["field"]
-            value = arguments["value"]
+            field   = arguments["field"]
+            value   = arguments["value"]
             updated = update_user(user_id, field, value)
             return f"Updated '{field}' for user {user_id}. Current name: {updated.get('name')}."
 

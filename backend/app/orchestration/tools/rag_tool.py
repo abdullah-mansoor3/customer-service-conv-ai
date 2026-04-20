@@ -3,31 +3,86 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
 _engine: Any | None = None
 _engine_error: str | None = None
 
+try:
+    from mcp_server.tools.integrations import call_rag_bridge
+except Exception:  # noqa: BLE001
+    call_rag_bridge = None
+
+
+def _import_rag_runtime():
+    """Import RAG runtime with a repo-root fallback for local backend launches."""
+    try:
+        from rag.config import (  # type: ignore
+            CHROMA_DIR,
+            COLLECTION_NAME,
+            DEFAULT_LLAMACPP_ENDPOINT,
+            DEFAULT_RETRIEVE_TOP_K,
+            DEFAULT_RERANK_TOP_K,
+            DEFAULT_SENTENCES_PER_CHUNK,
+        )
+        from rag.inference import RAGEngine  # type: ignore
+    except Exception:
+        repo_root = Path(__file__).resolve().parents[4]
+        repo_root_str = str(repo_root)
+        if repo_root_str not in sys.path:
+            sys.path.insert(0, repo_root_str)
+
+        from rag.config import (  # type: ignore
+            CHROMA_DIR,
+            COLLECTION_NAME,
+            DEFAULT_LLAMACPP_ENDPOINT,
+            DEFAULT_RETRIEVE_TOP_K,
+            DEFAULT_RERANK_TOP_K,
+            DEFAULT_SENTENCES_PER_CHUNK,
+        )
+        from rag.inference import RAGEngine  # type: ignore
+
+    return (
+        CHROMA_DIR,
+        COLLECTION_NAME,
+        DEFAULT_LLAMACPP_ENDPOINT,
+        DEFAULT_RETRIEVE_TOP_K,
+        DEFAULT_RERANK_TOP_K,
+        DEFAULT_SENTENCES_PER_CHUNK,
+        RAGEngine,
+    )
+
 
 def retrieve_isp_knowledge(query: str) -> str:
     """Retrieve ISP troubleshooting and device context for factual support queries."""
     global _engine, _engine_error
+
+    bridge_url = os.getenv("RAG_TOOL_BRIDGE_URL", "").strip()
+    if bridge_url and call_rag_bridge is not None:
+        bridge_result = call_rag_bridge(query=query, top_k=3)
+        if bridge_result.get("ok"):
+            payload = bridge_result.get("data", {})
+            if isinstance(payload, dict):
+                return json.dumps(payload, ensure_ascii=False)
+            return str(payload)
 
     if _engine_error:
         return f"RAG retrieval unavailable: {_engine_error}"
 
     if _engine is None:
         try:
-            from rag.config import (
+            (
                 CHROMA_DIR,
                 COLLECTION_NAME,
                 DEFAULT_LLAMACPP_ENDPOINT,
                 DEFAULT_RETRIEVE_TOP_K,
                 DEFAULT_RERANK_TOP_K,
                 DEFAULT_SENTENCES_PER_CHUNK,
-            )
-            from rag.inference import RAGEngine
+                RAGEngine,
+            ) = _import_rag_runtime()
         except Exception as exc:  # noqa: BLE001
             _engine_error = str(exc)
             return f"RAG retrieval unavailable: {_engine_error}"

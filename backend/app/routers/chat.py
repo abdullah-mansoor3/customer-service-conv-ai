@@ -41,9 +41,20 @@ async def websocket_chat(websocket: WebSocket):
                 data = json.loads(raw)
                 user_message = str(data.get("message", "")).strip()
                 session_id = data.get("session_id")
+                raw_tool_hints = data.get("tool_hints", [])
             except (json.JSONDecodeError, AttributeError):
                 await websocket.send_json({"type": "error", "error": "Payload must be valid JSON."})
                 continue
+
+            tool_hints: list[str] = []
+            if isinstance(raw_tool_hints, list):
+                allowed = {"websearch", "rag", "profile"}
+                for item in raw_tool_hints:
+                    if not isinstance(item, str):
+                        continue
+                    normalized = item.strip().lower()
+                    if normalized in allowed and normalized not in tool_hints:
+                        tool_hints.append(normalized)
 
             if not user_message:
                 await websocket.send_json({"type": "error", "error": "Field 'message' is missing or empty."})
@@ -70,6 +81,7 @@ async def websocket_chat(websocket: WebSocket):
                     session_id=session_id,
                     user_message=user_message,
                     emit_state_block=True,
+                    tool_hints=tool_hints,
                 ):
                     if event.get("type") == "token":
                         token = str(event.get("token", ""))

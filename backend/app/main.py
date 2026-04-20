@@ -10,10 +10,33 @@ Registers all routers and middleware. Logic lives in:
     app/config.py            — env vars (LLAMA_SERVER_URL, SYSTEM_PROMPT)
 """
 
+import logging
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import chat, health, sessions, voice
+
+
+def _configure_logging() -> None:
+    """Configure app logger level so orchestration diagnostics are visible."""
+    level_name = os.getenv("BACKEND_LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        logging.basicConfig(
+            level=level,
+            format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        )
+    else:
+        root_logger.setLevel(level)
+
+    logging.getLogger("app.orchestration.langgraph_engine").setLevel(level)
+
+
+_configure_logging()
 
 app = FastAPI(title="Customer Service Conversational AI")
 

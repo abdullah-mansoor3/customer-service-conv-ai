@@ -23,6 +23,7 @@ LLAMA_API_KEY: str = os.getenv("LLAMA_API_KEY", "not-needed")
 LLAMA_TEMPERATURE: float = float(os.getenv("LLAMA_TEMPERATURE", "0.35"))
 LLAMA_TOP_P: float = float(os.getenv("LLAMA_TOP_P", "0.9"))
 LLAMA_TIMEOUT_SEC: float = float(os.getenv("LLAMA_TIMEOUT_SEC", "90"))
+LLAMA_TOOL_PLANNER_TIMEOUT_SEC: float = float(os.getenv("LLAMA_TOOL_PLANNER_TIMEOUT_SEC", "8"))
 
 DEFAULT_SYSTEM_PROMPT: str = os.getenv(
     "SYSTEM_PROMPT",

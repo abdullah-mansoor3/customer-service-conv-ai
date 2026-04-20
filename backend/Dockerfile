@@ -8,6 +8,8 @@ RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir -r backend-requirements.txt -r rag-requirements.txt
 
 COPY backend/app/ ./app/
+COPY crm/ ./crm/
+COPY mcp_server/ ./mcp_server/
 COPY rag/ ./rag/
 COPY rag_data/ ./rag_data/
 
