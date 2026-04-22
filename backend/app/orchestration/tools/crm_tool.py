@@ -29,14 +29,15 @@ GET_USER_INFO_TOOL_SPEC: dict[str, Any] = {
     "function": {
         "name": "get_user_info",
         "description": (
-            "Retrieve stored information about the user, including known profile fields and recent interactions."
+            "Profile-memory lookup tool. Use only for personalization/memory requests (name/contact/preferences), "
+            "not for ISP factual knowledge."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "user_id": {
                     "type": "string",
-                    "description": "Session or user identifier.",
+                    "description": "Session/user identifier for CRM profile lookup.",
                 }
             },
             "required": ["user_id"],
@@ -51,22 +52,26 @@ UPDATE_USER_INFO_TOOL_SPEC: dict[str, Any] = {
     "function": {
         "name": "update_user_info",
         "description": (
-            "Store or update one user profile field, such as name, contact, or preference values."
+            "Profile-memory write tool. Use only when user explicitly provides or asks to remember profile data "
+            "(name/contact/preferences)."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "user_id": {
                     "type": "string",
-                    "description": "Session or user identifier.",
+                    "description": "Session/user identifier for CRM profile update.",
                 },
                 "field": {
                     "type": "string",
-                    "description": "Profile field to update (for example: name, contact, preferred_language).",
+                    "description": (
+                        "Field to update. Prefer 'name' or 'contact' for top-level fields; other keys are stored "
+                        "under preferences."
+                    ),
                 },
                 "value": {
                     "type": "string",
-                    "description": "New value for the target field.",
+                    "description": "Value to store exactly as provided by the user.",
                 },
             },
             "required": ["user_id", "field", "value"],

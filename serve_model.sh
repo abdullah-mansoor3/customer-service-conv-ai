@@ -143,6 +143,8 @@ UBATCH_SIZE="${LLAMA_UBATCH_SIZE:-128}"
 PARALLEL_SLOTS="${LLAMA_PARALLEL_SLOTS:-2}"
 HTTP_THREADS="${LLAMA_HTTP_THREADS:-4}"
 POLL_LEVEL="${LLAMA_POLL_LEVEL:-0}"
+VERBOSE_LOGS="${LLAMA_VERBOSE:-0}"
+LOG_VERBOSE="${LLAMA_LOG_VERBOSE:-0}"
 
 # Dynamically infer the chat template based on the model filename
 MODEL_BASENAME=$(basename "$MODEL_PATH" | tr '[:upper:]' '[:lower:]')
@@ -211,6 +213,18 @@ if [ "${LLAMA_MLOCK:-0}" = "1" ] && supports_flag --mlock; then
     CMD="$CMD --mlock"
 fi
 
+if [ "$VERBOSE_LOGS" = "1" ]; then
+    if supports_flag --verbose; then
+        CMD="$CMD --verbose"
+    fi
+    if [ "$LOG_VERBOSE" = "1" ] && supports_flag --log-verbose; then
+        CMD="$CMD --log-verbose"
+    fi
+    if supports_flag --log-timestamps; then
+        CMD="$CMD --log-timestamps"
+    fi
+fi
+
 if [ -n "$CHAT_TEMPLATE" ] && supports_flag --chat-template; then
     echo "Detected template heuristics. Forcing chat template: $CHAT_TEMPLATE"
     CMD="$CMD --chat-template $CHAT_TEMPLATE"
@@ -220,6 +234,8 @@ fi
 
 echo "Runtime tuning: ctx=$CTX_SIZE, batch=$BATCH_SIZE, ubatch=$UBATCH_SIZE, parallel_slots=$PARALLEL_SLOTS"
 echo "CPU tuning: threads=$THREADS, batch_threads=$BATCH_THREADS, http_threads=$HTTP_THREADS, poll=$POLL_LEVEL"
+echo "Verbose llama logs: $VERBOSE_LOGS"
+echo "Token-level verbose logs: $LOG_VERBOSE"
 
 echo "Executing: $CMD"
 eval "$CMD"

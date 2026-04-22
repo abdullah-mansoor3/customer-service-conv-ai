@@ -23,11 +23,23 @@ LLAMA_API_KEY: str = os.getenv("LLAMA_API_KEY", "not-needed")
 LLAMA_TEMPERATURE: float = float(os.getenv("LLAMA_TEMPERATURE", "0.35"))
 LLAMA_TOP_P: float = float(os.getenv("LLAMA_TOP_P", "0.9"))
 LLAMA_TIMEOUT_SEC: float = float(os.getenv("LLAMA_TIMEOUT_SEC", "90"))
-LLAMA_TOOL_PLANNER_TIMEOUT_SEC: float = float(os.getenv("LLAMA_TOOL_PLANNER_TIMEOUT_SEC", "8"))
+LLAMA_TOOL_PLANNER_TIMEOUT_SEC: float = float(os.getenv("LLAMA_TOOL_PLANNER_TIMEOUT_SEC", "30"))
+LLAMA_TOOL_PLANNER_MAX_STEPS: int = int(os.getenv("LLAMA_TOOL_PLANNER_MAX_STEPS", "4"))
+LLAMA_TOOL_PLANNER_MAX_TOKENS: int = int(os.getenv("LLAMA_TOOL_PLANNER_MAX_TOKENS", "160"))
 
 DEFAULT_SYSTEM_PROMPT: str = os.getenv(
     "SYSTEM_PROMPT",
     "You are a helpful customer service assistant. Be concise and friendly.",
+)
+
+PLANNER_PROMPT: str = os.getenv(
+    "PLANNER_PROMPT",
+    (
+        "You are the planning model for an ISP support assistant. Read the latest user request and recent "
+        "context, then decide whether calling tools would improve factual accuracy, personalization, or workflow "
+        "quality. You may choose zero, one, or multiple tool calls over multiple rounds. If tools are not needed, "
+        "explicitly continue with no tool calls. Keep tool arguments short, specific, and grounded in the user query."
+    ),
 )
 
 MAX_HISTORY: int = int(os.getenv("MAX_HISTORY", "10"))

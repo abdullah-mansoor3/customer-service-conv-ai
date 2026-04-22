@@ -14,15 +14,15 @@ CRM_TOOLS = [
     {
         "name": "get_user_info",
         "description": (
-            "Retrieve stored information about the current user, including their name, "
-            "contact details, preferences, and recent interaction history."
+            "Profile-memory lookup tool. Use only when user asks what you remember about them "
+            "(name/contact/preferences), not for ISP factual knowledge."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "user_id": {
                     "type": "string",
-                    "description": "The unique session or user identifier."
+                    "description": "Session/user identifier used to retrieve CRM profile memory."
                 }
             },
             "required": ["user_id"]
@@ -31,26 +31,25 @@ CRM_TOOLS = [
     {
         "name": "update_user_info",
         "description": (
-            "Store or update a specific piece of information about the user, such as "
-            "their name, contact number, or a preference (e.g. preferred language, "
-            "appointment time, dietary restriction)."
+            "Profile-memory write tool. Use only when user explicitly provides or asks to save "
+            "their profile information (name/contact/preferences)."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "user_id": {
                     "type": "string",
-                    "description": "The unique session or user identifier."
+                    "description": "Session/user identifier used to persist CRM profile fields."
                 },
                 "field": {
                     "type": "string",
                     "description": (
-                        "The field to update. Use 'name' for the user's name, "
-                        "'contact' for phone/email, or any custom preference key."
+                        "Field to update. Prefer 'name' or 'contact' for top-level fields; "
+                        "other keys are stored under preferences."
                     )
                 },
                 "value": {
-                    "description": "The value to store for the given field."
+                    "description": "Value to store exactly as provided by the user."
                 }
             },
             "required": ["user_id", "field", "value"]

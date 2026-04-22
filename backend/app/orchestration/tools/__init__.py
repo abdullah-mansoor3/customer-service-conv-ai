@@ -27,32 +27,68 @@ from app.orchestration.tools.support_tools import (
 
 
 class RetrieveIspKnowledgeArgs(BaseModel):
-	query: str = Field(description="The user question or troubleshooting issue to retrieve knowledge for.")
+	query: str = Field(
+		description=(
+			"Best-first factual lookup query for ISP support. Include provider name (for example PTCL/Nayatel) "
+			"and target fact (router model, package, helpline, setup, troubleshooting step)."
+		)
+	)
 
 
 class GetUserInfoArgs(BaseModel):
-	user_id: str = Field(description="Session or user identifier.")
+	user_id: str = Field(
+		description="Session/user identifier used to fetch CRM profile memory (name, contact, preferences)."
+	)
 
 
 class UpdateUserInfoArgs(BaseModel):
-	user_id: str = Field(description="Session or user identifier.")
-	field: str = Field(description="Profile field to update (for example: name, contact, preferred_language).")
-	value: str = Field(description="New value for the target field.")
+	user_id: str = Field(description="Session/user identifier for CRM persistence.")
+	field: str = Field(
+		description=(
+			"Field to persist. Prefer 'name' or 'contact' for top-level fields; other keys are stored under "
+			"preferences (for example preferred_language)."
+		)
+	)
+	value: str = Field(
+		description="Value to store. Only persist values explicitly stated by the user or requested to be remembered."
+	)
 
 
 class SearchWebArgs(BaseModel):
-	query: str = Field(description="Search query text.")
-	max_results: int = Field(default=5, description="Maximum number of results to include (1-10).")
+	query: str = Field(
+		description=(
+			"Web query for current/time-sensitive information or when KB evidence is missing. "
+			"Keep it concise and provider-specific."
+		)
+	)
+	max_results: int = Field(default=3, ge=1, le=5, description="Maximum results to return (1-5).")
 
 
 class StateOnlyArgs(BaseModel):
-	known_state: dict[str, Any] = Field(description="Known support state dictionary.")
+	known_state: dict[str, Any] = Field(
+		description=(
+			"Troubleshooting state object with keys: router_model, lights_status, error_message, "
+			"connection_type, has_restarted."
+		)
+	)
 
 
 class EvaluateEscalationArgs(BaseModel):
-	known_state: dict[str, Any] = Field(description="Known support state dictionary.")
-	failed_steps: list[str] = Field(default_factory=list, description="Already attempted troubleshooting steps that failed.")
-	minutes_without_service: int | None = Field(default=None, description="Approximate outage duration in minutes.")
+	known_state: dict[str, Any] = Field(
+		description=(
+			"Troubleshooting state object with keys: router_model, lights_status, error_message, "
+			"connection_type, has_restarted."
+		)
+	)
+	failed_steps: list[str] = Field(
+		default_factory=list,
+		description="Already-attempted troubleshooting actions that did not resolve the issue.",
+	)
+	minutes_without_service: int | None = Field(
+		default=None,
+		ge=0,
+		description="Approximate outage duration in minutes (non-negative).",
+	)
 
 ALL_TOOL_SPECS = [
 	RETRIEVE_ISP_KNOWLEDGE_TOOL_SPEC,
@@ -79,8 +115,8 @@ ALL_LANGCHAIN_TOOLS = [
 		func=retrieve_isp_knowledge,
 		name="retrieve_isp_knowledge",
 		description=(
-			"Retrieve ISP troubleshooting, router/device details, setup guides, and provider-specific "
-			"technical context for factual customer support questions."
+			"Primary knowledge tool for ISP/provider facts from local KB. Use for PTCL/Nayatel router brands, "
+			"packages, helplines, setup and troubleshooting guidance before answering factual support queries."
 		),
 		args_schema=RetrieveIspKnowledgeArgs,
 	),
@@ -88,38 +124,53 @@ ALL_LANGCHAIN_TOOLS = [
 		func=get_user_info,
 		coroutine=get_user_info,
 		name="get_user_info",
-		description="Retrieve stored information about the user profile and recent interactions.",
+		description=(
+			"Use for personalization or memory recall: fetch saved user profile values (name/contact/preferences). "
+			"Do not use for ISP factual lookup."
+		),
 		args_schema=GetUserInfoArgs,
 	),
 	StructuredTool.from_function(
 		func=update_user_info,
 		coroutine=update_user_info,
 		name="update_user_info",
-		description="Store or update one user profile field such as name, contact, or preferences.",
+		description=(
+			"Use only when user explicitly shares or asks to remember profile info (name/contact/preferences). "
+			"Do not use for troubleshooting facts."
+		),
 		args_schema=UpdateUserInfoArgs,
 	),
 	StructuredTool.from_function(
 		func=search_web,
 		name="search_web",
-		description="Search the public web for current ISP/networking information.",
+		description=(
+			"Secondary knowledge tool for current/time-sensitive public info when KB is insufficient or user asks "
+			"explicitly to search online."
+		),
 		args_schema=SearchWebArgs,
 	),
 	StructuredTool.from_function(
 		func=get_next_best_question,
 		name="get_next_best_question",
-		description="Suggest one best follow-up question based on missing troubleshooting state.",
+		description=(
+			"Workflow tool: generate the single highest-value next troubleshooting question from missing state fields."
+		),
 		args_schema=StateOnlyArgs,
 	),
 	StructuredTool.from_function(
 		func=diagnose_connection_issue,
 		name="diagnose_connection_issue",
-		description="Estimate likely root cause and next troubleshooting steps.",
+		description=(
+			"Workflow tool: infer likely connection root cause and immediate next actions from known troubleshooting state."
+		),
 		args_schema=StateOnlyArgs,
 	),
 	StructuredTool.from_function(
 		func=evaluate_escalation,
 		name="evaluate_escalation",
-		description="Decide whether to escalate the support issue and priority level.",
+		description=(
+			"Workflow tool: decide escalation need/priority after troubleshooting attempts and outage duration."
+		),
 		args_schema=EvaluateEscalationArgs,
 	),
 ]

@@ -8,6 +8,50 @@ const createSessionId = () => {
   return `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
+const USER_ID_STORAGE_KEY = 'isp_agent_user_id';
+
+const hashString = (input) => {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+  }
+  return (hash >>> 0).toString(16);
+};
+
+const getOrCreatePersistentUserId = () => {
+  if (typeof window === 'undefined') {
+    return createSessionId();
+  }
+
+  try {
+    const existing = window.localStorage.getItem(USER_ID_STORAGE_KEY);
+    if (existing) {
+      return existing;
+    }
+
+    const signatureParts = [
+      navigator.userAgent || 'na',
+      navigator.language || 'na',
+      navigator.platform || 'na',
+      Intl.DateTimeFormat().resolvedOptions().timeZone || 'na',
+      `${window.screen?.width || 0}x${window.screen?.height || 0}`,
+      String(navigator.hardwareConcurrency || 0),
+      String(navigator.deviceMemory || 0),
+    ];
+    const browserSignature = hashString(signatureParts.join('|'));
+    const randomSuffix =
+      (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID().slice(0, 8)
+        : Math.random().toString(16).slice(2, 10);
+    const userId = `user-${browserSignature}-${randomSuffix}`;
+    window.localStorage.setItem(USER_ID_STORAGE_KEY, userId);
+    return userId;
+  } catch (_err) {
+    return createSessionId();
+  }
+};
+
 function App() {
   // const [messages, setMessages] = useState([]); // Stores the chat history
   const [messages, setMessages] = useState([
@@ -17,7 +61,9 @@ function App() {
   const [chatHistory, setChatHistory] = useState([]);
   const [activeUiChatId, setActiveUiChatId] = useState(null);
   const [backendSessionId, setBackendSessionId] = useState(() => createSessionId());
+  const [persistentUserId] = useState(() => getOrCreatePersistentUserId());
   const [isTyping, setIsTyping] = useState(false);
+  const [agentStatus, setAgentStatus] = useState('');
 
   // Voice-related state
   const [isRecording, setIsRecording] = useState(false);
@@ -86,12 +132,27 @@ function App() {
           }
           if (data.done === true) {
             setIsTyping(false);
+            setAgentStatus('');
           }
+        }
+
+        if (data.type === 'status') {
+          const statusLine = [data.message, data.tool_name ? `(${data.tool_name})` : '']
+            .filter(Boolean)
+            .join(' ')
+            .trim();
+          setAgentStatus(statusLine || 'Processing your request...');
         }
 
         // Keep fallback support if the backend was sending "end"
         if (data.type === 'end') {
           setIsTyping(false);
+          setAgentStatus('');
+        }
+
+        if (data.type === 'error') {
+          setIsTyping(false);
+          setAgentStatus('');
         }
       } catch (err) {
         console.error("Format error:", err);
@@ -101,6 +162,7 @@ function App() {
     socket.current.onclose = () => {
       console.log("❌ Disconnected");
       setIsTyping(false);
+      setAgentStatus('');
     };
 
     return () => socket.current?.close();
@@ -149,17 +211,20 @@ function App() {
             setMessages(prev => [...prev, { role: 'ai', content: data.text }]);
             setIsVoiceProcessing(false);
             setIsTyping(false);
+            setAgentStatus('');
           } else if (data.type === 'cancelled') {
             resetLiveVoiceState();
             setIsVoiceTurnActive(false);
             setIsVoiceProcessing(false);
             setMessages(prev => [...prev, { role: 'ai', content: 'Voice turn cancelled.' }]);
+            setAgentStatus('');
           } else if (data.type === 'error') {
             console.error("Voice error:", data.error);
             setIsVoiceTurnActive(false);
             setIsVoiceProcessing(false);
             setMessages(prev => [...prev, { role: 'ai', content: `Voice Error: ${data.error}` }]);
             setIsTyping(false);
+            setAgentStatus('');
           }
         } catch (err) {
           console.error("Voice JSON parse error:", err);
@@ -179,6 +244,7 @@ function App() {
       setIsVoiceLoading(false);
       stopWaveAnimation(true);
       setIsTyping(false);
+      setAgentStatus('');
     };
 
     return () => voiceSocket.current?.close();
@@ -420,6 +486,7 @@ function App() {
       voiceSocket.current.send(JSON.stringify({
         type: 'set_session',
         session_id: backendSessionId,
+        user_id: persistentUserId,
       }));
 
       // Ensure backend uses the currently selected voice for this turn.
@@ -512,6 +579,7 @@ function App() {
     const currentInput = input; // Store it before clearing
     setInput('');
     setIsTyping(true);
+    setAgentStatus('Analyzing your request and planning next steps...');
 
     if (IS_OFFLINE) {
       // --- DUMMY MODE ---
@@ -521,12 +589,14 @@ function App() {
       if (socket.current && socket.current.readyState === WebSocket.OPEN) {
         socket.current.send(JSON.stringify({
           message: currentInput,
-          session_id: backendSessionId
+          session_id: backendSessionId,
+          user_id: persistentUserId,
         }));
       } else {
         // Failure Handling (Requirement 6)
         setMessages(prev => [...prev, { role: 'ai', content: "⚠️ Error: Connection lost. Please refresh." }]);
         setIsTyping(false);
+        setAgentStatus('');
       }
     }
   };
@@ -544,6 +614,7 @@ function App() {
         } else {
           clearInterval(interval);
           setIsTyping(false);
+          setAgentStatus('');
         }
       }, 50);
     }, 500);
@@ -561,6 +632,7 @@ function App() {
     setActiveUiChatId(null);
     setBackendSessionId(createSessionId());
     setIsTyping(false);
+    setAgentStatus('');
   };
 
   const handleSwitchChat = (selectedChat) => {
@@ -586,6 +658,7 @@ function App() {
     setActiveUiChatId(selectedChat.id);
     setBackendSessionId(selectedChat.sessionId || createSessionId());
     setIsTyping(false);
+    setAgentStatus('');
   };
 
   return (
@@ -639,7 +712,7 @@ function App() {
               <div className="dot"></div>
               <div className="dot"></div>
               <div className="dot"></div>
-              <span>us ko sochne do... (⁠･⁠o⁠･⁠;⁠)</span>
+              <span>{agentStatus || 'us ko sochne do... (⁠･⁠o⁠･⁠;⁠)'}</span>
             </div>
           )}
           <div ref={scrollRef} />

@@ -240,6 +240,7 @@ async def voice_chat_websocket(websocket: WebSocket):
     cancel_event: asyncio.Event | None = None
     selected_voice_id = DEFAULT_VOICE_ID
     selected_session_id: str | None = None
+    selected_user_id: str | None = None
     active_preload_task: asyncio.Task | None = None
     active_preload_voice_id: str | None = None
     preload_generation = 0
@@ -312,6 +313,7 @@ async def voice_chat_websocket(websocket: WebSocket):
         turn_cancel_event: asyncio.Event,
         turn_voice_id: str,
         turn_session_id: str,
+        turn_user_id: str,
     ):
         try:
             preload_task = ensure_voice_preload_task(turn_voice_id)
@@ -355,6 +357,7 @@ async def voice_chat_websocket(websocket: WebSocket):
             result = await conversation_orchestrator.run_turn(
                 session_id=session_id,
                 user_message=user_text,
+                user_id=turn_user_id,
             )
 
             if turn_cancel_event.is_set():
@@ -477,17 +480,26 @@ async def voice_chat_websocket(websocket: WebSocket):
 
                 if data.get("type") == "set_session":
                     requested_session_id = data.get("session_id")
+                    requested_user_id = str(data.get("user_id") or "").strip()
                     if not requested_session_id or requested_session_id == "new_session":
                         selected_session_id = str(uuid.uuid4())
                     else:
                         selected_session_id = str(requested_session_id)
+
+                    if requested_user_id:
+                        selected_user_id = requested_user_id
 
                     if selected_session_id not in sessions:
                         sessions[selected_session_id] = {
                             "created_at": datetime.now(timezone.utc).isoformat(),
                             "messages": [],
                             "state": {**DEFAULT_STATE},
+                            "user_id": selected_user_id or selected_session_id,
                         }
+
+                    if not selected_user_id:
+                        selected_user_id = str(sessions[selected_session_id].get("user_id") or selected_session_id)
+                    sessions[selected_session_id]["user_id"] = selected_user_id
 
                     await websocket.send_json({"type": "session_id", "session_id": selected_session_id})
                     continue
@@ -510,8 +522,13 @@ async def voice_chat_websocket(websocket: WebSocket):
                             "created_at": datetime.now(timezone.utc).isoformat(),
                             "messages": [],
                             "state": {**DEFAULT_STATE},
+                            "user_id": selected_user_id or selected_session_id,
                         }
                     await websocket.send_json({"type": "session_id", "session_id": selected_session_id})
+
+                if not selected_user_id:
+                    selected_user_id = str(sessions[selected_session_id].get("user_id") or selected_session_id)
+                sessions[selected_session_id]["user_id"] = selected_user_id
 
                 cancel_event = asyncio.Event()
                 current_task = asyncio.create_task(
@@ -520,6 +537,7 @@ async def voice_chat_websocket(websocket: WebSocket):
                         cancel_event,
                         selected_voice_id,
                         selected_session_id,
+                        selected_user_id,
                     )
                 )
                 continue

@@ -41,6 +41,7 @@ async def websocket_chat(websocket: WebSocket):
                 data = json.loads(raw)
                 user_message = str(data.get("message", "")).strip()
                 session_id = data.get("session_id")
+                raw_user_id = data.get("user_id")
                 raw_tool_hints = data.get("tool_hints", [])
             except (json.JSONDecodeError, AttributeError):
                 await websocket.send_json({"type": "error", "error": "Payload must be valid JSON."})
@@ -61,9 +62,11 @@ async def websocket_chat(websocket: WebSocket):
                 continue
 
             session_id = str(session_id or uuid.uuid4())
+            user_id = str(raw_user_id or "").strip() or session_id
             _ensure_session(session_id)
 
             session = sessions[session_id]
+            session["user_id"] = user_id
 
             await conversation_orchestrator.ensure_thread_state(
                 session_id=session_id,
@@ -75,18 +78,32 @@ async def websocket_chat(websocket: WebSocket):
 
             final_result: AgentTurnResult | None = None
             done_sent = False
+            emitted_assistant_token = False
 
             try:
                 async for event in conversation_orchestrator.stream_turn_events(
                     session_id=session_id,
                     user_message=user_message,
+                    user_id=user_id,
                     emit_state_block=True,
                     tool_hints=tool_hints,
                 ):
                     if event.get("type") == "token":
                         token = str(event.get("token", ""))
                         if token:
+                            emitted_assistant_token = True
                             await websocket.send_json({"type": "token", "token": token, "done": False})
+                    elif event.get("type") == "status":
+                        await websocket.send_json(
+                            {
+                                "type": "status",
+                                "phase": str(event.get("phase", "planning")),
+                                "message": str(event.get("message", "")),
+                                "tool_name": str(event.get("tool_name", "")) if event.get("tool_name") else None,
+                                "tool_args": str(event.get("tool_args", "")) if event.get("tool_args") else None,
+                                "detail": str(event.get("detail", "")) if event.get("detail") else None,
+                            }
+                        )
                     elif event.get("type") == "visible_done":
                         if not done_sent:
                             await websocket.send_json({"type": "token", "token": "", "done": True})
@@ -110,6 +127,12 @@ async def websocket_chat(websocket: WebSocket):
                     }
                 )
                 continue
+
+            # Safety fallback: if no streamed assistant token was emitted,
+            # still send the final assistant text so frontend can render a bubble.
+            if final_result.assistant_text and not emitted_assistant_token:
+                await websocket.send_json({"type": "token", "token": final_result.assistant_text, "done": False})
+                emitted_assistant_token = True
 
             if final_result.messages:
                 session["messages"] = final_result.messages

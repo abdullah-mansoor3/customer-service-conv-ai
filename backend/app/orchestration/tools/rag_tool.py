@@ -98,11 +98,37 @@ def retrieve_isp_knowledge(query: str) -> str:
         _engine._default_rerank_top_k = DEFAULT_RERANK_TOP_K
         _engine._default_sentences_per_chunk = DEFAULT_SENTENCES_PER_CHUNK
 
+    normalized_query = query.strip().lower()
+    is_factual_lookup = any(
+        key in normalized_query
+        for key in [
+            "helpline",
+            "contact",
+            "complaint",
+            "number",
+            "price",
+            "pricing",
+            "package",
+            "plan",
+            "pkr",
+            "rupees",
+        ]
+    )
+
+    top_k = getattr(_engine, "_default_retrieve_top_k", 10)
+    rerank_k = getattr(_engine, "_default_rerank_top_k", 3)
+    per_chunk_sentences = getattr(_engine, "_default_sentences_per_chunk", 3)
+
+    if is_factual_lookup:
+        top_k = max(top_k, 18)
+        rerank_k = max(rerank_k, 6)
+        per_chunk_sentences = max(per_chunk_sentences, 4)
+
     result = _engine.answer(
         query=query,
-        top_k=getattr(_engine, "_default_retrieve_top_k", 10),
-        rerank_k=getattr(_engine, "_default_rerank_top_k", 3),
-        per_chunk_sentences=getattr(_engine, "_default_sentences_per_chunk", 3),
+        top_k=top_k,
+        rerank_k=rerank_k,
+        per_chunk_sentences=per_chunk_sentences,
         use_llm=False,
     )
 
@@ -123,15 +149,18 @@ RETRIEVE_ISP_KNOWLEDGE_TOOL_SPEC: dict[str, Any] = {
     "function": {
         "name": "retrieve_isp_knowledge",
         "description": (
-            "Retrieve ISP troubleshooting, router/device details, setup guides, and provider-specific technical "
-            "context for factual customer support questions."
+            "Primary ISP knowledge-base lookup tool. Use for provider-specific factual questions (PTCL/Nayatel "
+            "router brands, package details, helplines, setup, troubleshooting) before answering."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The user question or troubleshooting issue to retrieve knowledge for.",
+                    "description": (
+                        "Focused factual lookup query with provider name and requested fact. "
+                        "Example: 'PTCL helpline number' or 'Nayatel package prices PKR'."
+                    ),
                 }
             },
             "required": ["query"],
