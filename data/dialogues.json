@@ -1,0 +1,85 @@
+[
+  {
+    "id": "dialogue_1",
+    "messages": [
+      {"role": "user", "content": "Hello, I need help with my account."},
+      {"role": "assistant", "content": "Hi! I'd be happy to help. What seems to be the issue?"},
+      {"role": "user", "content": "I can't log in."},
+      {"role": "assistant", "content": "Let me check your account. What's your email?"}
+    ]
+  },
+  {
+    "id": "dialogue_2",
+    "messages": [
+      {"role": "user", "content": "Can you tell me about your products?"},
+      {"role": "assistant", "content": "Sure! We offer various services including support and CRM integration."}
+    ]
+  },
+  {
+    "id": "dialogue_3",
+    "messages": [
+      {"role": "user", "content": "I have a complaint."},
+      {"role": "assistant", "content": "I'm sorry to hear that. Please tell me more."},
+      {"role": "user", "content": "The service is slow."},
+      {"role": "assistant", "content": "We'll look into improving the performance."}
+    ]
+  },
+  {
+    "id": "dialogue_4",
+    "messages": [
+      {"role": "user", "content": "How do I reset my password?"},
+      {"role": "assistant", "content": "You can reset it from the login page. Click 'Forgot Password'."}
+    ]
+  },
+  {
+    "id": "dialogue_5",
+    "messages": [
+      {"role": "user", "content": "What's the status of my order?"},
+      {"role": "assistant", "content": "Let me check that for you. What's your order number?"}
+    ]
+  },
+  {
+    "id": "dialogue_6",
+    "messages": [
+      {"role": "user", "content": "I want to cancel my subscription."},
+      {"role": "assistant", "content": "I'm sorry to hear that. Can you tell me why?"},
+      {"role": "user", "content": "It's too expensive."},
+      {"role": "assistant", "content": "We have different plans. Let me suggest alternatives."}
+    ]
+  },
+  {
+    "id": "dialogue_7",
+    "messages": [
+      {"role": "user", "content": "Do you support WebSockets?"},
+      {"role": "assistant", "content": "Yes, our system uses WebSockets for real-time communication."}
+    ]
+  },
+  {
+    "id": "dialogue_8",
+    "messages": [
+      {"role": "user", "content": "How does RAG work?"},
+      {"role": "assistant", "content": "RAG retrieves relevant information from our knowledge base to answer your questions."}
+    ]
+  },
+  {
+    "id": "dialogue_9",
+    "messages": [
+      {"role": "user", "content": "Can I integrate with CRM?"},
+      {"role": "assistant", "content": "Absolutely! We have a CRM tool for seamless integration."}
+    ]
+  },
+  {
+    "id": "dialogue_10",
+    "messages": [
+      {"role": "user", "content": "What external tools do you have?"},
+      {"role": "assistant", "content": "We have three external tools: web search, support workflows, and integrations."}
+    ]
+  },
+  {
+    "id": "dialogue_11",
+    "messages": [
+      {"role": "user", "content": "I'm having trouble with the voice feature."},
+      {"role": "assistant", "content": "Let me help with that. What specific issue are you facing?"}
+    ]
+  }
+]

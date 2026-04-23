@@ -1,0 +1,104 @@
+{
+  "human_annotations": [
+    {
+      "dialogue_id": "dialogue_001",
+      "annotator": "human_1",
+      "annotations": {
+        "task_completion": 1,
+        "policy_adherence": 1,
+        "coherence": 1,
+        "notes": "Perfect dialogue. Bot stayed on topic, remembered context across turns, successfully guided user through password reset."
+      }
+    },
+    {
+      "dialogue_id": "dialogue_002",
+      "annotator": "human_1",
+      "annotations": {
+        "task_completion": 1,
+        "policy_adherence": 1,
+        "coherence": 1,
+        "notes": "Excellent handling of refund policy question. Bot acknowledged customer concern, stayed professional, properly escalated exception request."
+      }
+    },
+    {
+      "dialogue_id": "dialogue_003",
+      "annotator": "human_1",
+      "annotations": {
+        "task_completion": 1,
+        "policy_adherence": 1,
+        "coherence": 1,
+        "notes": "Strong policy adherence. Bot correctly redirected cryptocurrency question, provided relevant product info, identified sales opportunity without being pushy."
+      }
+    },
+    {
+      "dialogue_id": "dialogue_004",
+      "annotator": "human_1",
+      "annotations": {
+        "task_completion": 1,
+        "policy_adherence": 1,
+        "coherence": 1,
+        "notes": "Excellent billing issue resolution. Bot identified problem, remembered context throughout, set proper expectations, provided confirmation."
+      }
+    },
+    {
+      "dialogue_id": "dialogue_005",
+      "annotator": "human_1",
+      "annotations": {
+        "task_completion": 1,
+        "policy_adherence": 1,
+        "coherence": 1,
+        "notes": "Good technical troubleshooting. Bot remembered previous mention of version-related issues, provided appropriate solution path with upgrade guidance."
+      }
+    },
+    {
+      "dialogue_id": "dialogue_006",
+      "annotator": "human_1",
+      "annotations": {
+        "task_completion": 1,
+        "policy_adherence": 1,
+        "coherence": 1,
+        "notes": "Clear upgrade consultation. Bot maintained context about starter plan, provided clear pricing info including discounts, left door open for follow-up."
+      }
+    },
+    {
+      "dialogue_id": "dialogue_007",
+      "annotator": "human_2",
+      "annotations": {
+        "task_completion": 1,
+        "policy_adherence": 1,
+        "coherence": 1,
+        "notes": "Excellent complaint handling. Bot showed empathy, investigated specific ticket, remembered issue context, appropriately escalated to specialist."
+      }
+    },
+    {
+      "dialogue_id": "dialogue_008",
+      "annotator": "human_2",
+      "annotations": {
+        "task_completion": 1,
+        "policy_adherence": 1,
+        "coherence": 1,
+        "notes": "Perfect policy adherence. Bot correctly declined quantum mechanics question, redirected to business domain, remembered Pro vs Enterprise context for SSO."
+      }
+    },
+    {
+      "dialogue_id": "dialogue_009",
+      "annotator": "human_2",
+      "annotations": {
+        "task_completion": 1,
+        "policy_adherence": 1,
+        "coherence": 1,
+        "notes": "Excellent retention strategy. Bot remembered free tier option, user remained interested, remembered earlier conversation about tier details."
+      }
+    },
+    {
+      "dialogue_id": "dialogue_010",
+      "annotator": "human_2",
+      "annotations": {
+        "task_completion": 1,
+        "policy_adherence": 1,
+        "coherence": 1,
+        "notes": "Strong domain boundary. Bot correctly redirected restaurant question, seamlessly pivoted to relevant product use case, remembered 15-location context."
+      }
+    }
+  ]
+}

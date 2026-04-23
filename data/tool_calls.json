@@ -1,0 +1,19 @@
+{
+  "crm_tests": [
+    {"id": "crm_1", "input": {"action": "get_customer", "customer_id": "123"}, "expected": {"name": "John Doe", "email": "john@example.com"}},
+    {"id": "crm_2", "input": {"action": "update_customer", "customer_id": "123", "data": {"phone": "123-456-7890"}}, "expected": "Updated successfully"},
+    {"id": "crm_3", "input": {"action": "create_customer", "data": {"name": "Jane Smith", "email": "jane@example.com"}}, "expected": {"customer_id": "124"}}
+  ],
+  "web_search_tests": [
+    {"id": "ws_1", "input": {"query": "latest news"}, "expected": "Search results for latest news"},
+    {"id": "ws_2", "input": {"query": "weather today"}, "expected": "Weather information"}
+  ],
+  "support_workflows_tests": [
+    {"id": "sw_1", "input": {"issue": "login problem"}, "expected": "Workflow steps for login issue"},
+    {"id": "sw_2", "input": {"issue": "billing question"}, "expected": "Billing support workflow"}
+  ],
+  "integrations_tests": [
+    {"id": "int_1", "input": {"service": "email", "action": "send"}, "expected": "Email sent"},
+    {"id": "int_2", "input": {"service": "slack", "action": "notify"}, "expected": "Slack notification sent"}
+  ]
+}
