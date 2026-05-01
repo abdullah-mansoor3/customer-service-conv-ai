@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Any
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
+
+_repo_root = Path(__file__).resolve().parents[3]
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
 
 from app.orchestration.tools.crm_tool import (
 	GET_USER_INFO_TOOL_SPEC,
@@ -18,10 +24,12 @@ from app.orchestration.tools.support_tools import (
 	DIAGNOSE_CONNECTION_ISSUE_TOOL_SPEC,
 	EVALUATE_ESCALATION_TOOL_SPEC,
 	GET_NEXT_BEST_QUESTION_TOOL_SPEC,
+	GET_PAGE_CONTENT_TOOL_SPEC,
 	SEARCH_WEB_TOOL_SPEC,
 	diagnose_connection_issue,
 	evaluate_escalation,
 	get_next_best_question,
+	get_page_content,
 	search_web,
 )
 
@@ -64,6 +72,11 @@ class SearchWebArgs(BaseModel):
 	max_results: int = Field(default=3, ge=1, le=5, description="Maximum results to return (1-5).")
 
 
+class GetPageContentArgs(BaseModel):
+	url: str = Field(description="The complete URL of the web page to fetch content from.")
+	max_length: int = Field(default=8000, ge=1000, le=15000, description="Maximum characters to return.")
+
+
 class StateOnlyArgs(BaseModel):
 	known_state: dict[str, Any] = Field(
 		description=(
@@ -95,16 +108,21 @@ ALL_TOOL_SPECS = [
 	GET_USER_INFO_TOOL_SPEC,
 	UPDATE_USER_INFO_TOOL_SPEC,
 	SEARCH_WEB_TOOL_SPEC,
+	GET_PAGE_CONTENT_TOOL_SPEC,
+]
+
+ALL_TOOL_SPECS.extend([
 	GET_NEXT_BEST_QUESTION_TOOL_SPEC,
 	DIAGNOSE_CONNECTION_ISSUE_TOOL_SPEC,
 	EVALUATE_ESCALATION_TOOL_SPEC,
-]
+])
 
 ALL_TOOLS_BY_NAME = {
 	"retrieve_isp_knowledge": retrieve_isp_knowledge,
 	"get_user_info": get_user_info,
 	"update_user_info": update_user_info,
 	"search_web": search_web,
+	"get_page_content": get_page_content,
 	"get_next_best_question": get_next_best_question,
 	"diagnose_connection_issue": diagnose_connection_issue,
 	"evaluate_escalation": evaluate_escalation,
@@ -150,6 +168,18 @@ ALL_LANGCHAIN_TOOLS = [
 		args_schema=SearchWebArgs,
 	),
 	StructuredTool.from_function(
+		func=get_page_content,
+		name="get_page_content",
+		description=(
+			"Fetch the full content of a web page URL to read details not available in search snippets. "
+			"Use after search_web returns relevant URLs to get the actual page content for answering user questions."
+		),
+		args_schema=GetPageContentArgs,
+	),
+]
+
+ALL_LANGCHAIN_TOOLS.extend([
+	StructuredTool.from_function(
 		func=get_next_best_question,
 		name="get_next_best_question",
 		description=(
@@ -173,7 +203,7 @@ ALL_LANGCHAIN_TOOLS = [
 		),
 		args_schema=EvaluateEscalationArgs,
 	),
-]
+])
 
 __all__ = [
 	"RETRIEVE_ISP_KNOWLEDGE_TOOL_SPEC",
@@ -193,4 +223,6 @@ __all__ = [
 	"ALL_TOOL_SPECS",
 	"ALL_TOOLS_BY_NAME",
 	"ALL_LANGCHAIN_TOOLS",
+	"get_page_content",
+	"GET_PAGE_CONTENT_TOOL_SPEC",
 ]

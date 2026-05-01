@@ -1,0 +1,27 @@
+{
+  "total_evaluated": 10,
+  "task_completion": {
+    "mean": 1,
+    "median": 1.0,
+    "count_1": 10,
+    "count_0": 0
+  },
+  "policy_adherence": {
+    "mean": 1,
+    "median": 1.0,
+    "count_1": 10,
+    "count_0": 0
+  },
+  "coherence": {
+    "mean": 1,
+    "median": 1.0,
+    "count_1": 10,
+    "count_0": 0
+  },
+  "overall": {
+    "mean": 1.0,
+    "median": 1.0,
+    "min": 1.0,
+    "max": 1.0
+  }
+}

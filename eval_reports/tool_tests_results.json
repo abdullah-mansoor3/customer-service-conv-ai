@@ -1,0 +1,37 @@
+{
+  "support_workflow_tests": [
+    {
+      "test_id": "sw_next_question_empty",
+      "passed": true
+    },
+    {
+      "test_id": "sw_next_question_partial",
+      "passed": true
+    },
+    {
+      "test_id": "sw_diagnose_red_lights",
+      "passed": true
+    },
+    {
+      "test_id": "sw_diagnose_wifi",
+      "passed": true
+    },
+    {
+      "test_id": "sw_diagnose_dns",
+      "passed": true
+    },
+    {
+      "test_id": "sw_escalate_long_outage",
+      "passed": true
+    },
+    {
+      "test_id": "sw_no_escalate",
+      "passed": true
+    }
+  ],
+  "summary": {
+    "total": 7,
+    "passed": 7,
+    "failed": 0
+  }
+}

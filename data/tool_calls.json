@@ -1,19 +1,174 @@
 {
   "crm_tests": [
-    {"id": "crm_1", "input": {"action": "get_customer", "customer_id": "123"}, "expected": {"name": "John Doe", "email": "john@example.com"}},
-    {"id": "crm_2", "input": {"action": "update_customer", "customer_id": "123", "data": {"phone": "123-456-7890"}}, "expected": "Updated successfully"},
-    {"id": "crm_3", "input": {"action": "create_customer", "data": {"name": "Jane Smith", "email": "jane@example.com"}}, "expected": {"customer_id": "124"}}
+    {
+      "id": "crm_get_existing",
+      "tool_name": "get_user_info",
+      "input": {"user_id": "test_user_001"},
+      "expected_fields": ["name", "contact", "preferences", "last_seen"]
+    },
+    {
+      "id": "crm_get_new",
+      "tool_name": "get_user_info",
+      "input": {"user_id": "brand_new_user_xyz"},
+      "expected_contains": "new profile"
+    },
+    {
+      "id": "crm_update_name",
+      "tool_name": "update_user_info",
+      "input": {"user_id": "test_user_001", "field": "name", "value": "Ahmed Khan"},
+      "expected_contains": "Updated"
+    },
+    {
+      "id": "crm_update_contact",
+      "tool_name": "update_user_info",
+      "input": {"user_id": "test_user_001", "field": "contact", "value": "0300-1234567"},
+      "expected_contains": "Updated"
+    },
+    {
+      "id": "crm_update_preference",
+      "tool_name": "update_user_info",
+      "input": {"user_id": "test_user_001", "field": "preferred_language", "value": "Urdu"},
+      "expected_contains": "Updated"
+    }
+  ],
+  "rag_tests": [
+    {
+      "id": "rag_ptcl_helpline",
+      "tool_name": "retrieve_isp_knowledge",
+      "input": {"query": "PTCL helpline number"},
+      "expected_has_context": true
+    },
+    {
+      "id": "rag_nayatel_packages",
+      "tool_name": "retrieve_isp_knowledge",
+      "input": {"query": "Nayatel internet package prices PKR"},
+      "expected_has_context": true
+    },
+    {
+      "id": "rag_tplink_setup",
+      "tool_name": "retrieve_isp_knowledge",
+      "input": {"query": "TP-Link router configuration setup"},
+      "expected_has_context": true
+    }
   ],
   "web_search_tests": [
-    {"id": "ws_1", "input": {"query": "latest news"}, "expected": "Search results for latest news"},
-    {"id": "ws_2", "input": {"query": "weather today"}, "expected": "Weather information"}
+    {
+      "id": "ws_ptcl_prices",
+      "tool_name": "search_web",
+      "input": {"query": "PTCL internet package prices PKR", "max_results": 3},
+      "expected_has_results": true
+    },
+    {
+      "id": "ws_nayatel_router",
+      "tool_name": "search_web",
+      "input": {"query": "Nayatel router model brand", "max_results": 3},
+      "expected_has_results": true
+    }
   ],
-  "support_workflows_tests": [
-    {"id": "sw_1", "input": {"issue": "login problem"}, "expected": "Workflow steps for login issue"},
-    {"id": "sw_2", "input": {"issue": "billing question"}, "expected": "Billing support workflow"}
-  ],
-  "integrations_tests": [
-    {"id": "int_1", "input": {"service": "email", "action": "send"}, "expected": "Email sent"},
-    {"id": "int_2", "input": {"service": "slack", "action": "notify"}, "expected": "Slack notification sent"}
+  "support_workflow_tests": [
+    {
+      "id": "sw_next_question_empty",
+      "tool_name": "get_next_best_question",
+      "input": {
+        "known_state": {
+          "router_model": null,
+          "lights_status": null,
+          "error_message": null,
+          "connection_type": null,
+          "has_restarted": null
+        }
+      },
+      "expected_target_field": "connection_type"
+    },
+    {
+      "id": "sw_next_question_partial",
+      "tool_name": "get_next_best_question",
+      "input": {
+        "known_state": {
+          "router_model": null,
+          "lights_status": null,
+          "error_message": null,
+          "connection_type": "wifi",
+          "has_restarted": null
+        }
+      },
+      "expected_target_field": "lights_status"
+    },
+    {
+      "id": "sw_diagnose_red_lights",
+      "tool_name": "diagnose_connection_issue",
+      "input": {
+        "known_state": {
+          "router_model": "Huawei",
+          "lights_status": "blinking red",
+          "error_message": null,
+          "connection_type": "wifi",
+          "has_restarted": true
+        }
+      },
+      "expected_likely_cause": "Router signal or hardware sync issue"
+    },
+    {
+      "id": "sw_diagnose_wifi",
+      "tool_name": "diagnose_connection_issue",
+      "input": {
+        "known_state": {
+          "router_model": "TP-Link",
+          "lights_status": "green",
+          "error_message": null,
+          "connection_type": "wifi",
+          "has_restarted": true
+        }
+      },
+      "expected_likely_cause": "Wi-Fi layer issue"
+    },
+    {
+      "id": "sw_diagnose_dns",
+      "tool_name": "diagnose_connection_issue",
+      "input": {
+        "known_state": {
+          "router_model": null,
+          "lights_status": "green",
+          "error_message": "DNS probe finished no internet",
+          "connection_type": "ethernet",
+          "has_restarted": true
+        }
+      },
+      "expected_likely_cause": "DNS resolution issue"
+    },
+    {
+      "id": "sw_escalate_long_outage",
+      "tool_name": "evaluate_escalation",
+      "input": {
+        "known_state": {
+          "router_model": null,
+          "lights_status": "no light",
+          "error_message": null,
+          "connection_type": null,
+          "has_restarted": true
+        },
+        "failed_steps": ["restarted modem", "checked cables", "factory reset"],
+        "minutes_without_service": 180
+      },
+      "expected_escalate": true,
+      "expected_priority": "high"
+    },
+    {
+      "id": "sw_no_escalate",
+      "tool_name": "evaluate_escalation",
+      "input": {
+        "known_state": {
+          "router_model": "TP-Link",
+          "lights_status": "green",
+          "error_message": null,
+          "connection_type": "wifi",
+          "has_restarted": false
+        },
+        "failed_steps": [],
+        "minutes_without_service": 10
+      },
+      "expected_escalate": false,
+      "expected_priority": "none"
+    }
   ]
 }

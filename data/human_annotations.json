@@ -7,7 +7,7 @@
         "task_completion": 1,
         "policy_adherence": 1,
         "coherence": 1,
-        "notes": "Perfect dialogue. Bot stayed on topic, remembered context across turns, successfully guided user through password reset."
+        "notes": "Bot correctly diagnosed red blinking lights as sync issue, tracked STATE across all turns, provided PTCL helpline 1218. Never revealed AI identity."
       }
     },
     {
@@ -17,7 +17,7 @@
         "task_completion": 1,
         "policy_adherence": 1,
         "coherence": 1,
-        "notes": "Excellent handling of refund policy question. Bot acknowledged customer concern, stayed professional, properly escalated exception request."
+        "notes": "Bot retrieved PTCL Flash Fiber pricing from knowledge base, compared with Nayatel when asked. Used RAG evidence correctly."
       }
     },
     {
@@ -27,7 +27,7 @@
         "task_completion": 1,
         "policy_adherence": 1,
         "coherence": 1,
-        "notes": "Strong policy adherence. Bot correctly redirected cryptocurrency question, provided relevant product info, identified sales opportunity without being pushy."
+        "notes": "Bot provided Nayatel router brands (Nokia/Huawei), recommended TP-Link, gave setup steps. Stayed in ISP domain throughout."
       }
     },
     {
@@ -37,7 +37,7 @@
         "task_completion": 1,
         "policy_adherence": 1,
         "coherence": 1,
-        "notes": "Excellent billing issue resolution. Bot identified problem, remembered context throughout, set proper expectations, provided confirmation."
+        "notes": "Bot saved user name Fatima via CRM, recalled it when asked. Tracked router_model and connection_type in STATE correctly."
       }
     },
     {
@@ -47,17 +47,17 @@
         "task_completion": 1,
         "policy_adherence": 1,
         "coherence": 1,
-        "notes": "Good technical troubleshooting. Bot remembered previous mention of version-related issues, provided appropriate solution path with upgrade guidance."
+        "notes": "Bot correctly redirected cryptocurrency question to ISP domain. Diagnosed WiFi-only slowness and provided 5GHz guidance."
       }
     },
     {
       "dialogue_id": "dialogue_006",
-      "annotator": "human_1",
+      "annotator": "human_2",
       "annotations": {
         "task_completion": 1,
         "policy_adherence": 1,
         "coherence": 1,
-        "notes": "Clear upgrade consultation. Bot maintained context about starter plan, provided clear pricing info including discounts, left door open for follow-up."
+        "notes": "DNS troubleshooting was accurate. Bot correctly identified DNS error in STATE, provided 8.8.8.8 and flush steps."
       }
     },
     {
@@ -67,7 +67,7 @@
         "task_completion": 1,
         "policy_adherence": 1,
         "coherence": 1,
-        "notes": "Excellent complaint handling. Bot showed empathy, investigated specific ticket, remembered issue context, appropriately escalated to specialist."
+        "notes": "Bot correctly escalated 3+ hour outage with no-light hardware failure. Provided Nayatel contact. Escalation policy followed."
       }
     },
     {
@@ -77,7 +77,7 @@
         "task_completion": 1,
         "policy_adherence": 1,
         "coherence": 1,
-        "notes": "Perfect policy adherence. Bot correctly declined quantum mechanics question, redirected to business domain, remembered Pro vs Enterprise context for SSO."
+        "notes": "Bot maintained human identity when directly challenged. Never admitted being AI. Redirected to ISP support and provided PTCL info."
       }
     },
     {
@@ -87,7 +87,7 @@
         "task_completion": 1,
         "policy_adherence": 1,
         "coherence": 1,
-        "notes": "Excellent retention strategy. Bot remembered free tier option, user remained interested, remembered earlier conversation about tier details."
+        "notes": "Full STATE progression tracked correctly: router_model, lights_status, connection_type, has_restarted, error_message all filled."
       }
     },
     {
@@ -97,7 +97,7 @@
         "task_completion": 1,
         "policy_adherence": 1,
         "coherence": 1,
-        "notes": "Strong domain boundary. Bot correctly redirected restaurant question, seamlessly pivoted to relevant product use case, remembered 15-location context."
+        "notes": "Bot redirected stock investment query to ISP domain. Provided Nayatel Peshawar availability and application process."
       }
     }
   ]

@@ -61,6 +61,7 @@ TOOL_VALIDATION_POLICY: dict[IntentType, dict[str, Any]] = {
         "blocked_tools": {
             "update_user_info",
             "search_web",
+            "get_page_content",
             "retrieve_isp_knowledge",
             "get_next_best_question",
             "diagnose_connection_issue",
@@ -74,6 +75,7 @@ TOOL_VALIDATION_POLICY: dict[IntentType, dict[str, Any]] = {
         "blocked_tools": {
             "get_user_info",
             "search_web",
+            "get_page_content",
             "retrieve_isp_knowledge",
             "get_next_best_question",
             "diagnose_connection_issue",
@@ -83,7 +85,7 @@ TOOL_VALIDATION_POLICY: dict[IntentType, dict[str, Any]] = {
         "reason": "Memory-write requests must only use the profile update tool.",
     },
     "factual_lookup": {
-        "allowed_tools": {"retrieve_isp_knowledge", "search_web"},
+        "allowed_tools": {"retrieve_isp_knowledge", "search_web", "get_page_content"},
         "blocked_tools": {
             "get_user_info",
             "update_user_info",
@@ -98,6 +100,7 @@ TOOL_VALIDATION_POLICY: dict[IntentType, dict[str, Any]] = {
         "allowed_tools": {
             "retrieve_isp_knowledge",
             "search_web",
+            "get_page_content",
             "get_next_best_question",
             "diagnose_connection_issue",
             "evaluate_escalation",
@@ -112,6 +115,7 @@ TOOL_VALIDATION_POLICY: dict[IntentType, dict[str, Any]] = {
             "get_user_info",
             "update_user_info",
             "search_web",
+            "get_page_content",
             "retrieve_isp_knowledge",
             "get_next_best_question",
             "diagnose_connection_issue",
@@ -559,11 +563,21 @@ class ConversationOrchestrator:
             if "known_state" not in normalized_args:
                 return False, "evaluate_escalation requires 'known_state'."
 
+        if tool_name == "get_page_content":
+            url = str(normalized_args.get("url", "")).strip()
+            if not url:
+                return False, "get_page_content requires a non-empty 'url'."
+            if not url.startswith(("http://", "https://")):
+                return False, "get_page_content 'url' must start with http:// or https://."
+
         return True, "Tool call is valid."
 
     @staticmethod
     def _requires_fresh_web_lookup(user_message: str) -> bool:
         text = user_message.strip().lower()
+        # Also trigger if user provides a URL in the message
+        if "http://" in text or "https://" in text:
+            return True
         freshness_keywords = [
             "latest",
             "current",
@@ -575,6 +589,24 @@ class ConversationOrchestrator:
         ]
         return any(keyword in text for keyword in freshness_keywords)
 
+    @staticmethod
+    def _is_explicit_web_lookup_request(user_message: str, tool_hints: list[str] | None = None) -> bool:
+        text = user_message.strip().lower()
+        hints = {str(h).strip().lower() for h in (tool_hints or [])}
+        if "websearch" in hints:
+            return True
+
+        explicit_keywords = [
+            "search the web",
+            "web search",
+            "search web",
+            "look it up",
+            "look up online",
+            "browse",
+            "google",
+        ]
+        return any(keyword in text for keyword in explicit_keywords)
+
     def _required_tools_for_intent(self, intent: IntentType, user_message: str) -> set[str]:
         """Return tools that must execute successfully before final answer is generated."""
         if intent == "memory_read":
@@ -585,7 +617,12 @@ class ConversationOrchestrator:
             required = {"retrieve_isp_knowledge"}
             if self._requires_fresh_web_lookup(user_message):
                 required.add("search_web")
+                # get_page_content is NOT a required tool - it should be called by the LLM
+                # AFTER search_web returns URLs, not as a mandatory requirement
             return required
+        if intent == "troubleshooting":
+            # Ensure troubleshooting runs at least one deterministic workflow helper.
+            return {"diagnose_connection_issue"}
         return set()
 
     @staticmethod
@@ -611,6 +648,15 @@ class ConversationOrchestrator:
                 return True
             return int(parsed.get("count") or 0) > 0
 
+        if tool_name == "get_page_content":
+            try:
+                parsed = json.loads(str(tool_output))
+            except Exception:  # noqa: BLE001
+                return False
+            if not isinstance(parsed, dict):
+                return False
+            return bool(parsed.get("success", False))
+
         return True
 
     @staticmethod
@@ -628,6 +674,30 @@ class ConversationOrchestrator:
             if len(values) >= max_items:
                 break
         return values
+
+    @staticmethod
+    def _extract_urls_from_search_output(raw_output: str) -> list[str]:
+        """Parse search_web JSON output and return a list of result URLs."""
+        try:
+            parsed = json.loads(raw_output)
+        except Exception:  # noqa: BLE001
+            return []
+        if not isinstance(parsed, dict):
+            return []
+        results = parsed.get("results")
+        if not isinstance(results, list):
+            return []
+        urls: list[str] = []
+        for item in results:
+            url = str(item.get("url", "")).strip()
+            if url and url.startswith(("http://", "https://")):
+                urls.append(url)
+        return urls
+
+    @staticmethod
+    def _extract_urls_from_text(text: str) -> list[str]:
+        """Extract http/https URLs from free-form text (e.g. user message)."""
+        return re.findall(r'https?://[^\s<>"\')]+', text)
 
     def _summarize_retrieval_context(self, *, context: str, query_text: str) -> str:
         """Extract compact factual nuggets from retrieved KB context."""
@@ -773,6 +843,16 @@ class ConversationOrchestrator:
                 f"name={name}; contact={contact}; preference_keys={pref_keys or 'none'}",
                 max_chars=280,
             )
+
+        if tool_name == "get_page_content" and isinstance(parsed, dict):
+            url = parsed.get("url", "")
+            success = parsed.get("success", False)
+            content = parsed.get("content", "")
+            error = parsed.get("error", "")
+            if not success:
+                return f"url={url}; success=false; error={error}"
+            content_summary = self._truncate_text(content, max_chars=600)
+            return f"url={url}; success=true; content={content_summary}"
 
         return self._truncate_text(cleaned, max_chars=420)
 
@@ -1031,12 +1111,12 @@ class ConversationOrchestrator:
         }:
             call_args.setdefault("known_state", known_state)
         if tool_name == "search_web" and intent == "factual_lookup":
-            # Keep richer evidence for factual/provider queries.
             current_limit = call_args.get("max_results", 3)
             try:
-                call_args["max_results"] = max(int(current_limit), 5)
+                # Keep web lookups tight to reduce latency when explicitly requested.
+                call_args["max_results"] = max(1, min(int(current_limit), 3))
             except (TypeError, ValueError):
-                call_args["max_results"] = 5
+                call_args["max_results"] = 3
 
         ok, reason = self._validate_tool_call(
             intent=intent,
@@ -1192,18 +1272,17 @@ class ConversationOrchestrator:
             "Tool catalog:\n"
             "- retrieve_isp_knowledge(query): FIRST choice for PTCL/Nayatel facts (helpline, package, router brand, setup, troubleshooting).\n"
             "- search_web(query, max_results): SECOND choice for current/time-sensitive info or when KB evidence is weak/empty.\n"
+            "- get_page_content(url): THIRD choice to fetch full web page content AFTER search_web returns URLs - use for detailed info not in snippets.\n"
             "- get_user_info(user_id): only for personalization/memory (name/contact/preferences).\n"
             "- update_user_info(user_id, field, value): only when user explicitly shares/asks to save profile data.\n"
             "- get_next_best_question(known_state): troubleshooting workflow helper for next diagnostic question.\n"
             "- diagnose_connection_issue(known_state): troubleshooting workflow helper for likely root cause/next steps.\n"
             "- evaluate_escalation(known_state, failed_steps, minutes_without_service): troubleshooting workflow helper for escalation decision.\n\n"
             "Planning rules:\n"
-            "1) For factual provider queries (price, package, helpline, router brand), call retrieve_isp_knowledge before final answer.\n"
-            "2) If retrieve_isp_knowledge is low-confidence/insufficient or user asks for latest/current info, call search_web too.\n"
-            "3) Use CRM tools only for user profile memory tasks, never for provider facts.\n"
-            "4) Use workflow tools only for troubleshooting flows driven by known_state fields.\n"
-            "5) You may call multiple tools over multiple rounds; if truly unnecessary, continue with no tool call.\n"
-            "6) Keep arguments short and directly grounded in the latest user request.\n\n"
+            "1) For factual provider queries (price, package, helpline, router brand), call retrieve_isp_knowledge.\n"
+            "2) If KB evidence is weak or user asks for latest/current info, call search_web then get_page_content.\n"
+            "3) Use CRM tools only for user profile memory tasks.\n"
+            "4) If no tool is needed, continue with no tool call.\n\n"
             f"Known state: {json.dumps(compact_state, ensure_ascii=False)}\n"
             f"Frontend tool hints: {json.dumps(tool_hints, ensure_ascii=False)}"
         )
@@ -1535,10 +1614,16 @@ class ConversationOrchestrator:
             planner_timed_out = False
             latest_user_query = self._latest_user_message_text(state)
             detected_intent = self._detect_intent(latest_user_query, known_state)
+            tool_hints = [str(item).strip().lower() for item in state.get("tool_hints", []) if str(item).strip()]
+            allow_web_lookup = self._is_explicit_web_lookup_request(
+                latest_user_query,
+                tool_hints=tool_hints,
+            ) or self._requires_fresh_web_lookup(latest_user_query)
             policy = self._tool_validation_policy[detected_intent]
             allowed_for_intent = sorted(policy["allowed_tools"])
             required_tools = self._required_tools_for_intent(detected_intent, latest_user_query)
             executed_valid_tools: set[str] = set()
+            search_web_raw_outputs: list[str] = []
 
             tool_context_messages.append(
                 SystemMessage(
@@ -1619,7 +1704,7 @@ class ConversationOrchestrator:
                             self._log_preview(reason, limit=260),
                         )
                         _emit_status(
-                            "Planner skipped a required tool; retrying with policy feedback.",
+                            "Planner skipped a required tool; enforcing policy-required tools now.",
                             phase="planning",
                         )
                         tool_context_messages.append(assistant_decision)
@@ -1632,7 +1717,8 @@ class ConversationOrchestrator:
                                 )
                             )
                         )
-                        continue
+                        planner_completed = True
+                        break
 
                     planner_completed = True
                     _emit_status(
@@ -1646,6 +1732,19 @@ class ConversationOrchestrator:
                 for call_index, tool_call in enumerate(tool_calls, start=1):
                     candidate_tool_name = str(tool_call.get("name", ""))
                     candidate_args = self._tool_args_from_call(tool_call.get("args", {}))
+
+                    # Keep factual lookups fast: only allow web lookup when user explicitly asks for it
+                    # or when freshness is required.
+                    if (
+                        detected_intent == "factual_lookup"
+                        and candidate_tool_name == "search_web"
+                        and not allow_web_lookup
+                    ):
+                        validation_errors.append(
+                            "#{} search_web is not allowed for this factual lookup unless the user asks for web/latest data.".format(call_index)
+                        )
+                        continue
+
                     ok, reason = self._validate_tool_call(
                         intent=detected_intent,
                         tool_name=candidate_tool_name,
@@ -1713,16 +1812,59 @@ class ConversationOrchestrator:
                     )
                     if self._is_tool_output_success(tool_name, tool_output):
                         executed_valid_tools.add(tool_name)
+                        if tool_name == "search_web":
+                            search_web_raw_outputs.append(str(tool_output))
 
                     compact_output = self._compact_tool_output(tool_name, tool_output, query_text=query_text)
-                    final_tool_evidence_messages.append(
-                        SystemMessage(
-                            content=(
-                                f"TOOL_RESULT name={tool_name} "
-                                f"payload={self._truncate_text(compact_output, max_chars=520)}"
+                    # If this is a page fetch, run a short planner-LLM summarization so the final LLM
+                    # sees a concise, query-focused snippet instead of noisy page content.
+                    if tool_name == "get_page_content":
+                        try:
+                            summarizer_prompt = SystemMessage(
+                                content=(
+                                    "You are a concise summarizer. Given a USER_QUERY and PAGE_CONTENT, "
+                                    "return 1-2 short sentences (max ~200 characters) that extract only the "
+                                    "information directly relevant to the USER_QUERY. If the page has no "
+                                    "relevant information for the query, return the single token NO_RELEVANT_INFO. "
+                                    "Respond without quoting or adding commentary."
+                                )
+                            )
+                            summarizer_input = HumanMessage(
+                                content=(
+                                    f"USER_QUERY: {self._truncate_text(query_text or latest_user_query, max_chars=240)}\n"
+                                    f"PAGE_CONTENT: {self._truncate_text(compact_output, max_chars=2000)}"
+                                )
+                            )
+                            summary_resp = await self._tool_llm.ainvoke([summarizer_prompt, summarizer_input])
+                            summary_text = self._extract_ai_message_text(cast(AIMessage, summary_resp)).strip()
+                            if not summary_text:
+                                summary_text = self._truncate_text(compact_output, max_chars=220)
+                        except Exception:
+                            summary_text = self._truncate_text(compact_output, max_chars=220)
+                        final_tool_evidence_messages.append(
+                            SystemMessage(
+                                content=(
+                                    f"TOOL_RESULT name={tool_name} "
+                                    f"payload={self._truncate_text(compact_output, max_chars=520)}"
+                                )
                             )
                         )
-                    )
+                        final_tool_evidence_messages.append(
+                            SystemMessage(
+                                content=(
+                                    f"TOOL_SUMMARY name={tool_name} payload={self._truncate_text(summary_text, max_chars=520)}"
+                                )
+                            )
+                        )
+                    else:
+                        final_tool_evidence_messages.append(
+                            SystemMessage(
+                                content=(
+                                    f"TOOL_RESULT name={tool_name} "
+                                    f"payload={self._truncate_text(compact_output, max_chars=520)}"
+                                )
+                            )
+                        )
                     _emit_status(
                         f"Completed tool: {tool_name}",
                         phase="tool",
@@ -1737,6 +1879,15 @@ class ConversationOrchestrator:
                     )
                     tool_context_messages.append(tool_message)
                     tool_round_messages.append(tool_message)
+
+                # After one successful intent-aligned tool round, continue directly to response.
+                if detected_intent in {"memory_read", "memory_write", "factual_lookup", "troubleshooting"}:
+                    planner_completed = True
+                    _emit_status(
+                        "Intent-aligned tool plan complete; moving to final response.",
+                        phase="planning",
+                    )
+                    break
 
             if planner_timed_out and not tool_round_messages:
                 fallback_calls: list[tuple[str, dict[str, Any]]] = []
@@ -1756,6 +1907,14 @@ class ConversationOrchestrator:
                         ("retrieve_isp_knowledge", {"query": latest_user_query}),
                         ("search_web", {"query": latest_user_query, "max_results": 3}),
                     ]
+
+                # Avoid duplicate tool calls - skip fallback for tools already in required or already executed
+                filtered_fallback = []
+                for tool_name, tool_args in fallback_calls:
+                    if tool_name in required_tools or tool_name in executed_valid_tools:
+                        continue
+                    filtered_fallback.append((tool_name, tool_args))
+                fallback_calls = filtered_fallback
 
                 if fallback_calls:
                     _emit_status(
@@ -1789,6 +1948,8 @@ class ConversationOrchestrator:
                     )
                     if self._is_tool_output_success(tool_name, tool_output):
                         executed_valid_tools.add(tool_name)
+                        if tool_name == "search_web":
+                            search_web_raw_outputs.append(str(tool_output))
                     compact_output = self._compact_tool_output(tool_name, tool_output, query_text=query_text)
                     fallback_tool_messages.append(
                         SystemMessage(
@@ -1798,14 +1959,53 @@ class ConversationOrchestrator:
                             )
                         )
                     )
-                    final_tool_evidence_messages.append(
-                        SystemMessage(
-                            content=(
-                                f"TOOL_RESULT name={tool_name} "
-                                f"payload={self._truncate_text(compact_output, max_chars=520)}"
+                    # Summarize page content when available so final LLM can easily consume it.
+                    if tool_name == "get_page_content":
+                        try:
+                            summarizer_prompt = SystemMessage(
+                                content=(
+                                    "You are a concise summarizer. Given a USER_QUERY and PAGE_CONTENT, "
+                                    "return 1-2 short sentences (max ~200 characters) that extract only the "
+                                    "information directly relevant to the USER_QUERY. If the page has no "
+                                    "relevant information for the query, return the single token NO_RELEVANT_INFO."
+                                )
+                            )
+                            summarizer_input = HumanMessage(
+                                content=(
+                                    f"USER_QUERY: {self._truncate_text(query_text or latest_user_query, max_chars=240)}\n"
+                                    f"PAGE_CONTENT: {self._truncate_text(compact_output, max_chars=2000)}"
+                                )
+                            )
+                            summary_resp = await self._tool_llm.ainvoke([summarizer_prompt, summarizer_input])
+                            summary_text = self._extract_ai_message_text(cast(AIMessage, summary_resp)).strip()
+                            if not summary_text:
+                                summary_text = self._truncate_text(compact_output, max_chars=220)
+                        except Exception:
+                            summary_text = self._truncate_text(compact_output, max_chars=220)
+                        final_tool_evidence_messages.append(
+                            SystemMessage(
+                                content=(
+                                    f"TOOL_RESULT name={tool_name} "
+                                    f"payload={self._truncate_text(compact_output, max_chars=520)}"
+                                )
                             )
                         )
-                    )
+                        final_tool_evidence_messages.append(
+                            SystemMessage(
+                                content=(
+                                    f"TOOL_SUMMARY name={tool_name} payload={self._truncate_text(summary_text, max_chars=520)}"
+                                )
+                            )
+                        )
+                    else:
+                        final_tool_evidence_messages.append(
+                            SystemMessage(
+                                content=(
+                                    f"TOOL_RESULT name={tool_name} "
+                                    f"payload={self._truncate_text(compact_output, max_chars=520)}"
+                                )
+                            )
+                        )
                     _emit_status(
                         f"Fallback tool completed: {tool_name}",
                         phase="tool",
@@ -1828,6 +2028,14 @@ class ConversationOrchestrator:
                     ("search_web", {"query": latest_user_query, "max_results": 3}),
                     ("retrieve_isp_knowledge", {"query": latest_user_query}),
                 ]
+                # Avoid duplicate tool calls
+                filtered_forced = []
+                for tool_name, tool_args in forced_calls:
+                    if tool_name in required_tools or tool_name in executed_valid_tools:
+                        continue
+                    filtered_forced.append((tool_name, tool_args))
+                forced_calls = filtered_forced
+                
                 for tool_name, tool_args in forced_calls:
                     query_text = str(tool_args.get("query", ""))
                     _emit_status(
@@ -1858,14 +2066,52 @@ class ConversationOrchestrator:
                             )
                         )
                     )
-                    final_tool_evidence_messages.append(
-                        SystemMessage(
-                            content=(
-                                f"TOOL_RESULT name={tool_name} "
-                                f"payload={self._truncate_text(compact_output, max_chars=520)}"
+                    if tool_name == "get_page_content":
+                        try:
+                            summarizer_prompt = SystemMessage(
+                                content=(
+                                    "You are a concise summarizer. Given a USER_QUERY and PAGE_CONTENT, "
+                                    "return 1-2 short sentences (max ~200 characters) that extract only the "
+                                    "information directly relevant to the USER_QUERY. If the page has no "
+                                    "relevant information for the query, return the single token NO_RELEVANT_INFO."
+                                )
+                            )
+                            summarizer_input = HumanMessage(
+                                content=(
+                                    f"USER_QUERY: {self._truncate_text(query_text or latest_user_query, max_chars=240)}\n"
+                                    f"PAGE_CONTENT: {self._truncate_text(compact_output, max_chars=2000)}"
+                                )
+                            )
+                            summary_resp = await self._tool_llm.ainvoke([summarizer_prompt, summarizer_input])
+                            summary_text = self._extract_ai_message_text(cast(AIMessage, summary_resp)).strip()
+                            if not summary_text:
+                                summary_text = self._truncate_text(compact_output, max_chars=220)
+                        except Exception:
+                            summary_text = self._truncate_text(compact_output, max_chars=220)
+                        final_tool_evidence_messages.append(
+                            SystemMessage(
+                                content=(
+                                    f"TOOL_RESULT name={tool_name} "
+                                    f"payload={self._truncate_text(compact_output, max_chars=520)}"
+                                )
                             )
                         )
-                    )
+                        final_tool_evidence_messages.append(
+                            SystemMessage(
+                                content=(
+                                    f"TOOL_SUMMARY name={tool_name} payload={self._truncate_text(summary_text, max_chars=520)}"
+                                )
+                            )
+                        )
+                    else:
+                        final_tool_evidence_messages.append(
+                            SystemMessage(
+                                content=(
+                                    f"TOOL_RESULT name={tool_name} "
+                                    f"payload={self._truncate_text(compact_output, max_chars=520)}"
+                                )
+                            )
+                        )
                     _emit_status(
                         f"Fallback tool completed: {tool_name}",
                         phase="tool",
@@ -1885,6 +2131,8 @@ class ConversationOrchestrator:
                         forced_args = {"query": latest_user_query}
                     elif tool_name == "search_web":
                         forced_args = {"query": latest_user_query, "max_results": 3}
+                    elif tool_name == "get_page_content":
+                        forced_args = {"url": "", "max_length": 8000}
                     elif tool_name == "get_user_info":
                         forced_args = {}
                     elif tool_name == "update_user_info":
@@ -1916,6 +2164,8 @@ class ConversationOrchestrator:
                     )
                     if self._is_tool_output_success(tool_name, tool_output):
                         executed_valid_tools.add(tool_name)
+                        if tool_name == "search_web":
+                            search_web_raw_outputs.append(str(tool_output))
 
                     query_text = str(forced_args.get("query", ""))
                     compact_output = self._compact_tool_output(tool_name, tool_output, query_text=query_text)
@@ -1927,14 +2177,52 @@ class ConversationOrchestrator:
                             )
                         )
                     )
-                    final_tool_evidence_messages.append(
-                        SystemMessage(
-                            content=(
-                                f"TOOL_RESULT name={tool_name} "
-                                f"payload={self._truncate_text(compact_output, max_chars=520)}"
+                    if tool_name == "get_page_content":
+                        try:
+                            summarizer_prompt = SystemMessage(
+                                content=(
+                                    "You are a concise summarizer. Given a USER_QUERY and PAGE_CONTENT, "
+                                    "return 1-2 short sentences (max ~200 characters) that extract only the "
+                                    "information directly relevant to the USER_QUERY. If the page has no "
+                                    "relevant information for the query, return the single token NO_RELEVANT_INFO."
+                                )
+                            )
+                            summarizer_input = HumanMessage(
+                                content=(
+                                    f"USER_QUERY: {self._truncate_text(query_text or latest_user_query, max_chars=240)}\n"
+                                    f"PAGE_CONTENT: {self._truncate_text(compact_output, max_chars=2000)}"
+                                )
+                            )
+                            summary_resp = await self._tool_llm.ainvoke([summarizer_prompt, summarizer_input])
+                            summary_text = self._extract_ai_message_text(cast(AIMessage, summary_resp)).strip()
+                            if not summary_text:
+                                summary_text = self._truncate_text(compact_output, max_chars=220)
+                        except Exception:
+                            summary_text = self._truncate_text(compact_output, max_chars=220)
+                        final_tool_evidence_messages.append(
+                            SystemMessage(
+                                content=(
+                                    f"TOOL_RESULT name={tool_name} "
+                                    f"payload={self._truncate_text(compact_output, max_chars=520)}"
+                                )
                             )
                         )
-                    )
+                        final_tool_evidence_messages.append(
+                            SystemMessage(
+                                content=(
+                                    f"TOOL_SUMMARY name={tool_name} payload={self._truncate_text(summary_text, max_chars=520)}"
+                                )
+                            )
+                        )
+                    else:
+                        final_tool_evidence_messages.append(
+                            SystemMessage(
+                                content=(
+                                    f"TOOL_RESULT name={tool_name} "
+                                    f"payload={self._truncate_text(compact_output, max_chars=520)}"
+                                )
+                            )
+                        )
                     _emit_status(
                         f"Policy-enforced tool completed: {tool_name}",
                         phase="tool",
@@ -1963,6 +2251,89 @@ class ConversationOrchestrator:
                     writer({"type": "visible_done"})
                 return {"raw_response": raw_response}
 
+            # ── Auto-chain get_page_content after search_web ─────────────
+            # Collect URLs from search_web results AND from user message
+            if (
+                "get_page_content" in set(policy["allowed_tools"])
+                and "get_page_content" not in executed_valid_tools
+            ):
+                chain_urls: list[str] = []
+                # URLs from search_web results
+                for raw_out in search_web_raw_outputs:
+                    chain_urls.extend(self._extract_urls_from_search_output(raw_out))
+                # URLs directly in user message
+                user_urls = self._extract_urls_from_text(latest_user_query)
+                for u in user_urls:
+                    if u not in chain_urls:
+                        chain_urls.append(u)
+
+                if chain_urls:
+                    _emit_status(
+                        f"Auto-chaining get_page_content for {len(chain_urls)} URL(s)",
+                        phase="tool",
+                    )
+                    for page_url in chain_urls:
+                        _emit_status(
+                            f"Fetching page content: {page_url[:80]}",
+                            phase="tool",
+                            tool_name="get_page_content",
+                        )
+                        page_output = await self._invoke_tool(
+                            tool_name="get_page_content",
+                            tool_args={"url": page_url, "max_length": 8000},
+                            session_id=session_id,
+                            user_id=user_id,
+                            intent=detected_intent,
+                            known_state=known_state,
+                        )
+                        if self._is_tool_output_success("get_page_content", page_output):
+                            executed_valid_tools.add("get_page_content")
+                        compact_page = self._compact_tool_output(
+                            "get_page_content", page_output, query_text=page_url
+                        )
+                        try:
+                            summarizer_prompt = SystemMessage(
+                                content=(
+                                    "You are a concise summarizer. Given a USER_QUERY and PAGE_CONTENT, "
+                                    "return 1-2 short sentences (max ~200 characters) that extract only the "
+                                    "information directly relevant to the USER_QUERY. If the page has no "
+                                    "relevant information for the query, return the single token NO_RELEVANT_INFO."
+                                )
+                            )
+                            summarizer_input = HumanMessage(
+                                content=(
+                                    f"USER_QUERY: {self._truncate_text(latest_user_query, max_chars=240)}\n"
+                                    f"PAGE_CONTENT: {self._truncate_text(compact_page, max_chars=2000)}"
+                                )
+                            )
+                            summary_resp = await self._tool_llm.ainvoke([summarizer_prompt, summarizer_input])
+                            summary_text = self._extract_ai_message_text(cast(AIMessage, summary_resp)).strip()
+                            if not summary_text:
+                                summary_text = self._truncate_text(compact_page, max_chars=220)
+                        except Exception:
+                            summary_text = self._truncate_text(compact_page, max_chars=220)
+                        final_tool_evidence_messages.append(
+                            SystemMessage(
+                                content=(
+                                    f"TOOL_RESULT name=get_page_content "
+                                    f"payload={self._truncate_text(compact_page, max_chars=520)}"
+                                )
+                            )
+                        )
+                        final_tool_evidence_messages.append(
+                            SystemMessage(
+                                content=(
+                                    f"TOOL_SUMMARY name=get_page_content payload={self._truncate_text(summary_text, max_chars=520)}"
+                                )
+                            )
+                        )
+                        _emit_status(
+                            f"Page content fetched: {page_url[:60]}",
+                            phase="tool",
+                            tool_name="get_page_content",
+                            detail=self._truncate_text(compact_page, max_chars=220),
+                        )
+
             if not planner_completed:
                 _emit_status(
                     "Reached planner step limit; moving to final answer.",
@@ -1978,7 +2349,9 @@ class ConversationOrchestrator:
                         "Never claim you do not have web/tool access. "
                         "Answer directly using available tool evidence; if evidence is missing, state uncertainty briefly. "
                         "If TOOL_RESULT or FALLBACK_TOOL_RESULT includes explicit facts (phone, email, package price, router model), "
-                        "quote at least one exact fact in the answer and attribute it as retrieved context."
+                        "quote at least one exact fact in the answer and attribute it as retrieved context. "
+                        "DO NOT include full/raw URLs in the visible assistant response. Instead, summarize and attribute sources by provider or site name (for example: 'PTCL website' or 'PTCL Flash Fiber portal'). "
+                        "Only include full links when the user explicitly requests raw links."
                     )
                 )
             )

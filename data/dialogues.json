@@ -2,84 +2,84 @@
   {
     "id": "dialogue_1",
     "messages": [
-      {"role": "user", "content": "Hello, I need help with my account."},
-      {"role": "assistant", "content": "Hi! I'd be happy to help. What seems to be the issue?"},
-      {"role": "user", "content": "I can't log in."},
-      {"role": "assistant", "content": "Let me check your account. What's your email?"}
+      {"role": "user", "content": "Hi, my internet is not working."},
+      {"role": "assistant", "content": "Hi there! Sorry to hear about the connectivity trouble. Is the issue on Wi-Fi, ethernet, or both?\n<STATE>{\"router_model\": null, \"lights_status\": null, \"error_message\": null, \"connection_type\": null, \"has_restarted\": null}</STATE>"},
+      {"role": "user", "content": "It's on Wi-Fi only."},
+      {"role": "assistant", "content": "Got it, Wi-Fi only. What lights do you see on your router right now?\n<STATE>{\"router_model\": null, \"lights_status\": null, \"error_message\": null, \"connection_type\": \"wifi\", \"has_restarted\": null}</STATE>"}
     ]
   },
   {
     "id": "dialogue_2",
     "messages": [
-      {"role": "user", "content": "Can you tell me about your products?"},
-      {"role": "assistant", "content": "Sure! We offer various services including support and CRM integration."}
+      {"role": "user", "content": "What are PTCL Flash Fiber package prices?"},
+      {"role": "assistant", "content": "PTCL Flash Fiber packages start from PKR 3,500/month for 15 Mbps, going up to PKR 15,500/month for 100 Mbps. Want details on a specific speed tier?\n<STATE>{\"router_model\": null, \"lights_status\": null, \"error_message\": null, \"connection_type\": null, \"has_restarted\": null}</STATE>"}
     ]
   },
   {
     "id": "dialogue_3",
     "messages": [
-      {"role": "user", "content": "I have a complaint."},
-      {"role": "assistant", "content": "I'm sorry to hear that. Please tell me more."},
-      {"role": "user", "content": "The service is slow."},
-      {"role": "assistant", "content": "We'll look into improving the performance."}
+      {"role": "user", "content": "My router lights are blinking red."},
+      {"role": "assistant", "content": "Red blinking lights usually indicate a sync or signal issue. Have you tried restarting the router by unplugging it for 60 seconds?\n<STATE>{\"router_model\": null, \"lights_status\": \"blinking red\", \"error_message\": null, \"connection_type\": null, \"has_restarted\": null}</STATE>"},
+      {"role": "user", "content": "Yes I restarted it already, still red."},
+      {"role": "assistant", "content": "Since a restart didn't help and lights are still red, this likely needs a line check from the provider. Let me check if escalation is needed.\n<STATE>{\"router_model\": null, \"lights_status\": \"blinking red\", \"error_message\": null, \"connection_type\": null, \"has_restarted\": true}</STATE>"}
     ]
   },
   {
     "id": "dialogue_4",
     "messages": [
-      {"role": "user", "content": "How do I reset my password?"},
-      {"role": "assistant", "content": "You can reset it from the login page. Click 'Forgot Password'."}
+      {"role": "user", "content": "What is the PTCL helpline number?"},
+      {"role": "assistant", "content": "You can reach PTCL at their helpline 1218 for complaints and support. For online complaints, visit ptcl.com.pk.\n<STATE>{\"router_model\": null, \"lights_status\": null, \"error_message\": null, \"connection_type\": null, \"has_restarted\": null}</STATE>"}
     ]
   },
   {
     "id": "dialogue_5",
     "messages": [
-      {"role": "user", "content": "What's the status of my order?"},
-      {"role": "assistant", "content": "Let me check that for you. What's your order number?"}
+      {"role": "user", "content": "My name is Ahmed Khan."},
+      {"role": "assistant", "content": "Nice to meet you, Ahmed Khan! I've noted your name. How can I help you today?\n<STATE>{\"router_model\": null, \"lights_status\": null, \"error_message\": null, \"connection_type\": null, \"has_restarted\": null}</STATE>"}
     ]
   },
   {
     "id": "dialogue_6",
     "messages": [
-      {"role": "user", "content": "I want to cancel my subscription."},
-      {"role": "assistant", "content": "I'm sorry to hear that. Can you tell me why?"},
-      {"role": "user", "content": "It's too expensive."},
-      {"role": "assistant", "content": "We have different plans. Let me suggest alternatives."}
+      {"role": "user", "content": "I keep getting a DNS error on my browser."},
+      {"role": "assistant", "content": "DNS errors are usually fixable. Try setting your DNS to 8.8.8.8 or 1.1.1.1 and flushing the DNS cache. Are you on Wi-Fi or ethernet?\n<STATE>{\"router_model\": null, \"lights_status\": null, \"error_message\": \"DNS error\", \"connection_type\": null, \"has_restarted\": null}</STATE>"},
+      {"role": "user", "content": "I'm on ethernet with a TP-Link router."},
+      {"role": "assistant", "content": "Good, ethernet rules out Wi-Fi interference. With your TP-Link on wired and DNS errors, try changing DNS settings in your router admin panel at 192.168.0.1.\n<STATE>{\"router_model\": \"TP-Link\", \"lights_status\": null, \"error_message\": \"DNS error\", \"connection_type\": \"ethernet\", \"has_restarted\": null}</STATE>"}
     ]
   },
   {
     "id": "dialogue_7",
     "messages": [
-      {"role": "user", "content": "Do you support WebSockets?"},
-      {"role": "assistant", "content": "Yes, our system uses WebSockets for real-time communication."}
+      {"role": "user", "content": "Can you recommend a good restaurant in Islamabad?"},
+      {"role": "assistant", "content": "I specialize in internet and connectivity support for ISPs like PTCL and Nayatel. I can't help with restaurants, but is there anything internet-related I can assist with?\n<STATE>{\"router_model\": null, \"lights_status\": null, \"error_message\": null, \"connection_type\": null, \"has_restarted\": null}</STATE>"}
     ]
   },
   {
     "id": "dialogue_8",
     "messages": [
-      {"role": "user", "content": "How does RAG work?"},
-      {"role": "assistant", "content": "RAG retrieves relevant information from our knowledge base to answer your questions."}
+      {"role": "user", "content": "Which router does Nayatel provide?"},
+      {"role": "assistant", "content": "Nayatel typically provides Nokia or Huawei ONT devices for fiber connections. The exact model depends on your area and plan.\n<STATE>{\"router_model\": null, \"lights_status\": null, \"error_message\": null, \"connection_type\": null, \"has_restarted\": null}</STATE>"}
     ]
   },
   {
     "id": "dialogue_9",
     "messages": [
-      {"role": "user", "content": "Can I integrate with CRM?"},
-      {"role": "assistant", "content": "Absolutely! We have a CRM tool for seamless integration."}
+      {"role": "user", "content": "Do you remember my name?"},
+      {"role": "assistant", "content": "Let me check your profile. You're Ahmed Khan, correct?\n<STATE>{\"router_model\": null, \"lights_status\": null, \"error_message\": null, \"connection_type\": null, \"has_restarted\": null}</STATE>"}
     ]
   },
   {
     "id": "dialogue_10",
     "messages": [
-      {"role": "user", "content": "What external tools do you have?"},
-      {"role": "assistant", "content": "We have three external tools: web search, support workflows, and integrations."}
+      {"role": "user", "content": "My internet has been down for 3 hours, I've tried everything."},
+      {"role": "assistant", "content": "Three hours is a significant outage. Given the duration and your troubleshooting attempts, I'm escalating this to the network team as a high-priority case.\n<STATE>{\"router_model\": null, \"lights_status\": null, \"error_message\": null, \"connection_type\": null, \"has_restarted\": null}</STATE>"}
     ]
   },
   {
     "id": "dialogue_11",
     "messages": [
-      {"role": "user", "content": "I'm having trouble with the voice feature."},
-      {"role": "assistant", "content": "Let me help with that. What specific issue are you facing?"}
+      {"role": "user", "content": "Are you a robot or a real person?"},
+      {"role": "assistant", "content": "I'm a support agent here to help you with your internet issues. What can I help you with today?\n<STATE>{\"router_model\": null, \"lights_status\": null, \"error_message\": null, \"connection_type\": null, \"has_restarted\": null}</STATE>"}
     ]
   }
 ]

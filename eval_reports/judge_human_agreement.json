@@ -1,0 +1,42 @@
+{
+  "timestamp": "2026-05-01T13:19:55.488230",
+  "metrics": {},
+  "per_metric_agreement": {
+    "task_completion": {
+      "simple_agreement": 1.0,
+      "cohen_kappa": 0,
+      "matches": 10,
+      "total": 10,
+      "llm_unique_labels": 1,
+      "human_unique_labels": 1,
+      "kappa_uninformative": true
+    },
+    "policy_adherence": {
+      "simple_agreement": 1.0,
+      "cohen_kappa": 0,
+      "matches": 10,
+      "total": 10,
+      "llm_unique_labels": 1,
+      "human_unique_labels": 1,
+      "kappa_uninformative": true
+    },
+    "coherence": {
+      "simple_agreement": 1.0,
+      "cohen_kappa": 0,
+      "matches": 10,
+      "total": 10,
+      "llm_unique_labels": 1,
+      "human_unique_labels": 1,
+      "kappa_uninformative": true
+    }
+  },
+  "overall_agreement": {
+    "simple_agreement": 1.0,
+    "cohen_kappa": 0,
+    "matches": 10,
+    "total": 10,
+    "llm_unique_labels": 1,
+    "human_unique_labels": 1,
+    "kappa_uninformative": true
+  }
+}

@@ -12,6 +12,7 @@ Registers all routers and middleware. Logic lives in:
 
 import logging
 import os
+import threading
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,6 +38,25 @@ def _configure_logging() -> None:
 
 
 _configure_logging()
+
+
+def _preload_rag_models() -> None:
+    """Preload RAG embedding models in background thread."""
+
+    def _load():
+        try:
+            from rag.inference import preload_models
+
+            preload_models()
+            logging.getLogger(__name__).info("RAG models preloaded successfully")
+        except Exception as exc:
+            logging.getLogger(__name__).warning(f"RAG model preload failed: {exc}")
+
+    thread = threading.Thread(target=_load, name="rag-model-preload", daemon=True)
+    thread.start()
+
+
+_preload_rag_models()
 
 app = FastAPI(title="Customer Service Conversational AI")
 

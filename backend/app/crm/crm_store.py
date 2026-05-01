@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 CRM_FILE = "crm/data/crm_data.json"
@@ -33,12 +33,12 @@ def create_or_get_user(user_id: str) -> dict:
             "contact": None,
             "preferences": {},
             "interaction_history": [],
-            "created_at": datetime.utcnow().isoformat(),
-            "last_seen": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_seen": datetime.now(timezone.utc).isoformat(),
         }
         _save(data)
     else:
-        data[user_id]["last_seen"] = datetime.utcnow().isoformat()
+        data[user_id]["last_seen"] = datetime.now(timezone.utc).isoformat()
         _save(data)
     return data[user_id]
 
@@ -69,7 +69,7 @@ def log_interaction(user_id: str, role: str, message: str):
     data[user_id]["interaction_history"].append({
         "role": role,
         "message": message,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     })
     # Keep only last 20 interactions to avoid file bloat
     data[user_id]["interaction_history"] = data[user_id]["interaction_history"][-20:]

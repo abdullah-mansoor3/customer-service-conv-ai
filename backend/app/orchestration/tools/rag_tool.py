@@ -120,9 +120,14 @@ def retrieve_isp_knowledge(query: str) -> str:
     per_chunk_sentences = getattr(_engine, "_default_sentences_per_chunk", 3)
 
     if is_factual_lookup:
-        top_k = max(top_k, 18)
-        rerank_k = max(rerank_k, 6)
-        per_chunk_sentences = max(per_chunk_sentences, 4)
+        # Keep retrieval fast by default; allow overrides for quality-focused runs.
+        factual_top_k = int(os.getenv("RAG_FACTUAL_TOP_K", "8"))
+        factual_rerank_k = int(os.getenv("RAG_FACTUAL_RERANK_K", "3"))
+        factual_sentences_per_chunk = int(os.getenv("RAG_FACTUAL_SENTENCES_PER_CHUNK", "3"))
+
+        top_k = max(4, min(factual_top_k, 12))
+        rerank_k = max(2, min(factual_rerank_k, top_k))
+        per_chunk_sentences = max(2, min(factual_sentences_per_chunk, 5))
 
     result = _engine.answer(
         query=query,

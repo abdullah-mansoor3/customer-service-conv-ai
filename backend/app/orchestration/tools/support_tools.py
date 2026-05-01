@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.request import Request, urlopen
+
+logger = logging.getLogger(__name__)
 
 
 def _import_with_repo_fallback(module_name: str, symbol_name: str):
@@ -38,6 +42,95 @@ def search_web(query: str, max_results: int = 3) -> str:
 
     result = web_search(query=query, max_results=max_results)
     return _json_or_error(result, "search_web")
+
+
+MAX_CONTENT_LENGTH = 8000
+
+
+def get_page_content(url: str, max_length: int = MAX_CONTENT_LENGTH) -> str:
+    """Fetch and extract main text content from a web page URL using BeautifulSoup.
+
+    Strips scripts, styles, nav, header, footer, and aside elements,
+    then returns the clean body text.  Should be called after search_web
+    returns URLs that need deeper reading.
+    """
+    if not url or not url.strip():
+        return '{"url":"","success":false,"error":"URL must be a non-empty string.","content":""}'
+
+    url = url.strip()
+
+    if not url.startswith(("http://", "https://")):
+        return json.dumps(
+            {"url": url, "success": False, "error": "URL must start with http:// or https://", "content": ""},
+            ensure_ascii=False,
+        )
+
+    request = Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        },
+    )
+
+    try:
+        with urlopen(request, timeout=15) as response:
+            html_bytes = response.read()
+            content_encoding = response.headers.get("Content-Encoding", "").lower()
+
+            if content_encoding in ("gzip", "deflate"):
+                import gzip
+
+                if content_encoding == "gzip":
+                    html_bytes = gzip.decompress(html_bytes)
+                else:
+                    import zlib
+
+                    html_bytes = zlib.decompress(html_bytes)
+
+            html = html_bytes.decode("utf-8", errors="ignore")
+
+    except Exception as exc:
+        logger.warning("get_page_content failed for %s: %s", url, exc)
+        return json.dumps(
+            {"url": url, "success": False, "error": f"Failed to fetch page: {exc}", "content": ""},
+            ensure_ascii=False,
+        )
+
+    # ── BeautifulSoup extraction ─────────────────────────────────────────
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        logger.error("beautifulsoup4 is not installed. Run: pip install beautifulsoup4")
+        return json.dumps(
+            {"url": url, "success": False, "error": "beautifulsoup4 not installed", "content": ""},
+            ensure_ascii=False,
+        )
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Remove non-content elements
+    for tag in soup.find_all(["script", "style", "nav", "header", "footer", "aside", "noscript", "iframe"]):
+        tag.decompose()
+
+    # Extract clean body text
+    body = soup.body
+    if body:
+        main_content = body.get_text(separator=" ", strip=True)
+    else:
+        main_content = soup.get_text(separator=" ", strip=True)
+
+    if len(main_content) > max_length:
+        main_content = main_content[:max_length].rsplit(" ", 1)[0] + "..."
+
+    return json.dumps(
+        {"url": url, "success": True, "content": main_content},
+        ensure_ascii=False,
+    )
 
 
 def get_next_best_question(known_state: dict[str, Any]) -> str:
@@ -111,6 +204,35 @@ SEARCH_WEB_TOOL_SPEC: dict[str, Any] = {
                 },
             },
             "required": ["query"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+GET_PAGE_CONTENT_TOOL_SPEC: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "get_page_content",
+        "description": (
+            "Fetch the full content of a web page URL to get detailed information not available in search snippets. "
+            "Use after search_web returns relevant URLs - call this tool to get the full page content, "
+            "then use that content as context to answer the user's question."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The complete URL of the web page to fetch content from.",
+                },
+                "max_length": {
+                    "type": "integer",
+                    "description": "Maximum characters to return (default 8000).",
+                    "default": 8000,
+                },
+            },
+            "required": ["url"],
             "additionalProperties": False,
         },
     },

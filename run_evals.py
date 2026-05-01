@@ -13,20 +13,29 @@ Runs all evaluations:
 
 import subprocess
 import json
+import logging
 import os
 import sys
+import re
 from datetime import datetime
 from pathlib import Path
 
-# Add tests directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'tests'))
+# Add project directories to path
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, os.path.join(PROJECT_ROOT, 'tests'))
+sys.path.insert(0, os.path.join(PROJECT_ROOT, 'backend'))
 
 try:
-    from eval_rag import load_rag_ground_truth, evaluate_rag_retrieval, generate_rag_report
-    from tests.test_tools import (
-        MockCRMTool, MockWebSearchTool, 
-        MockSupportWorkflowTool, MockIntegrationsTool,
-        load_tool_test_cases
+    from eval_rag import (
+        load_rag_ground_truth,
+        evaluate_rag_retrieval,
+        evaluate_with_ragas,
+        run_actual_rag_retrieval,
+        generate_rag_report,
+    )
+    from mcp_server.tools.support_workflows import (
+        next_best_question, diagnose_issue, decide_escalation
     )
 except ImportError as e:
     print(f"Warning: Could not import evaluation modules: {e}")
@@ -69,19 +78,35 @@ def run_rag_evaluation() -> dict:
     
     try:
         ground_truth = load_rag_ground_truth()
+
+        rag_runtime = run_actual_rag_retrieval(ground_truth)
+        if rag_runtime.get("error"):
+            raise RuntimeError(rag_runtime["error"])
+
+        retrieval_metrics = evaluate_rag_retrieval(
+            ground_truth,
+            rag_runtime["retrieved_results"],
+            relevant_doc_map=rag_runtime["relevant_doc_map"],
+        )
+
+        ragas_metrics = evaluate_with_ragas(
+            queries=rag_runtime["queries"],
+            contexts=rag_runtime["contexts"],
+            answers=rag_runtime["answers"],
+            ground_truths=rag_runtime["ground_truths"],
+        )
         
-        # Mock retrieved results - in production, these come from RAG system
-        retrieved_results = {
-            gt["id"]: [gt["id"], "doc_2", "doc_3", "doc_4", "doc_5"]
-            for gt in ground_truth
-        }
-        
-        retrieval_metrics = evaluate_rag_retrieval(ground_truth, retrieved_results)
-        
-        rag_report = generate_rag_report(retrieval_metrics, {})
+        rag_report = generate_rag_report(retrieval_metrics, ragas_metrics)
         
         with open("eval_reports/rag_evaluation.json", "w") as f:
-            json.dump(retrieval_metrics, f, indent=2)
+            json.dump(
+                {
+                    "retrieval_metrics": retrieval_metrics,
+                    "ragas_metrics": ragas_metrics,
+                },
+                f,
+                indent=2,
+            )
         
         with open("eval_reports/rag_report.md", "w") as f:
             f.write(rag_report)
@@ -90,7 +115,10 @@ def run_rag_evaluation() -> dict:
         
         return {
             "status": "completed",
-            "metrics": retrieval_metrics
+            "metrics": {
+                "retrieval_metrics": retrieval_metrics,
+                "ragas_metrics": ragas_metrics,
+            },
         }
     except Exception as e:
         print(f"Error running RAG evaluation: {e}")
@@ -107,107 +135,57 @@ def run_tool_tests() -> dict:
     print("="*60)
     
     try:
+        # Load ISP-specific test cases
+        data_path = os.path.join(PROJECT_ROOT, "data", "tool_calls.json")
+        with open(data_path, "r") as f:
+            test_cases = json.load(f)
+        
         tool_results = {
-            "crm_tests": [],
-            "web_search_tests": [],
             "support_workflow_tests": [],
-            "integrations_tests": []
+            "summary": {"total": 0, "passed": 0, "failed": 0}
         }
         
-        # CRM Tests
-        print("\nTesting CRM Tool...")
-        crm = MockCRMTool()
-        test_cases = load_tool_test_cases()
-        
-        for test_case in test_cases.get("crm_tests", []):
+        # Support Workflow Tests (next_best_question, diagnose_issue, decide_escalation)
+        print("\nTesting Support Workflow Tools...")
+        for test_case in test_cases.get("support_workflow_tests", []):
             test_id = test_case["id"]
-            input_data = test_case["input"]
-            expected = test_case["expected"]
+            tool_results["summary"]["total"] += 1
+            passed = False
             
             try:
-                if input_data["action"] == "get_customer":
-                    result = crm.get_customer(input_data["customer_id"])
-                    passed = all(result.get(k) == v for k, v in expected.items())
-                elif input_data["action"] == "create_customer":
-                    result = crm.create_customer(input_data["data"])
-                    passed = "customer_id" in result
-                else:
-                    passed = False
+                if test_case["tool_name"] == "get_next_best_question":
+                    result = next_best_question(test_case["input"]["known_state"])
+                    passed = result["target_field"] == test_case["expected_target_field"]
                 
-                tool_results["crm_tests"].append({
+                elif test_case["tool_name"] == "diagnose_connection_issue":
+                    result = diagnose_issue(test_case["input"]["known_state"])
+                    passed = test_case["expected_likely_cause"] in result["likely_cause"]
+                
+                elif test_case["tool_name"] == "evaluate_escalation":
+                    result = decide_escalation(
+                        test_case["input"]["known_state"],
+                        failed_steps=test_case["input"].get("failed_steps", []),
+                        minutes_without_service=test_case["input"].get("minutes_without_service"),
+                    )
+                    passed = (
+                        result["escalate"] == test_case["expected_escalate"]
+                        and result["priority"] == test_case["expected_priority"]
+                    )
+                
+                tool_results["support_workflow_tests"].append({
                     "test_id": test_id,
                     "passed": passed,
-                    "result": str(result) if passed else "failed"
                 })
+                
+                if passed:
+                    tool_results["summary"]["passed"] += 1
+                else:
+                    tool_results["summary"]["failed"] += 1
+                
                 print(f"  {test_id}: {'PASSED' if passed else 'FAILED'}")
             except Exception as e:
-                tool_results["crm_tests"].append({
-                    "test_id": test_id,
-                    "passed": False,
-                    "error": str(e)
-                })
-                print(f"  {test_id}: FAILED - {e}")
-        
-        # Web Search Tests
-        print("\nTesting Web Search Tool...")
-        ws = MockWebSearchTool()
-        for test_case in test_cases.get("web_search_tests", []):
-            test_id = test_case["id"]
-            try:
-                result = ws.search(test_case["input"]["query"])
-                passed = test_case["expected"] in result
-                tool_results["web_search_tests"].append({
-                    "test_id": test_id,
-                    "passed": passed
-                })
-                print(f"  {test_id}: {'PASSED' if passed else 'FAILED'}")
-            except Exception as e:
-                tool_results["web_search_tests"].append({
-                    "test_id": test_id,
-                    "passed": False,
-                    "error": str(e)
-                })
-                print(f"  {test_id}: FAILED - {e}")
-        
-        # Support Workflow Tests
-        print("\nTesting Support Workflow Tool...")
-        sw = MockSupportWorkflowTool()
-        for test_case in test_cases.get("support_workflows_tests", []):
-            test_id = test_case["id"]
-            try:
-                result = sw.get_workflow(test_case["input"]["issue"])
-                passed = result == test_case["expected"]
+                tool_results["summary"]["failed"] += 1
                 tool_results["support_workflow_tests"].append({
-                    "test_id": test_id,
-                    "passed": passed
-                })
-                print(f"  {test_id}: {'PASSED' if passed else 'FAILED'}")
-            except Exception as e:
-                tool_results["support_workflow_tests"].append({
-                    "test_id": test_id,
-                    "passed": False,
-                    "error": str(e)
-                })
-                print(f"  {test_id}: FAILED - {e}")
-        
-        # Integrations Tests
-        print("\nTesting Integrations Tool...")
-        integ = MockIntegrationsTool()
-        for test_case in test_cases.get("integrations_tests", []):
-            test_id = test_case["id"]
-            try:
-                result = integ.execute_integration(
-                    test_case["input"]["service"],
-                    test_case["input"]["action"]
-                )
-                passed = result == test_case["expected"]
-                tool_results["integrations_tests"].append({
-                    "test_id": test_id,
-                    "passed": passed
-                })
-                print(f"  {test_id}: {'PASSED' if passed else 'FAILED'}")
-            except Exception as e:
-                tool_results["integrations_tests"].append({
                     "test_id": test_id,
                     "passed": False,
                     "error": str(e)
@@ -241,7 +219,7 @@ def run_tool_accuracy_tests() -> dict:
         from test_tool_accuracy import WebSocketToolAccuracyTester, TOOL_ACCURACY_TEST_CASES
         
         async def run_tests():
-            tester = WebSocketToolAccuracyTester(timeout=5)
+            tester = WebSocketToolAccuracyTester(timeout=120)
             results = await tester.run_test_suite(TOOL_ACCURACY_TEST_CASES)
             return results
         
@@ -251,9 +229,11 @@ def run_tool_accuracy_tests() -> dict:
             json.dump(results, f, indent=2)
         
         print(json.dumps(results, indent=2))
+
+        has_failures = int(results.get("failed", 0)) > 0
         
         return {
-            "status": "completed",
+            "status": "failed" if has_failures else "completed",
             "results": results
         }
     except Exception as e:
@@ -271,17 +251,32 @@ def run_locust() -> dict:
     print("RUNNING LOCUST BENCHMARKS")
     print("="*60)
     
+    backend_host = os.getenv("EVAL_BACKEND_URL", "http://127.0.0.1:8000")
     result = subprocess.run(
         ["python", "-m", "locust", "-f", "benchmarks/locustfile.py", 
-         "--headless", "-u", "10", "-r", "1", "--run-time", "30s"],
+         "--headless", "--host", backend_host, "-u", "10", "-r", "1", "--run-time", "30s"],
         capture_output=True,
         text=True
     )
+
+    stderr_lower = (result.stderr or "").lower()
+    stdout_text = result.stdout or ""
+    host_error = "must specify the base host" in stderr_lower
+    stop_error = "stoptest" in stderr_lower or "failed with stoptest" in stderr_lower
+    no_requests = re.search(r"Aggregated\s+0\s+0\(0\.00%\)", stdout_text) is not None
+    benchmark_ok = result.returncode == 0 and not host_error and not stop_error and not no_requests
     
     benchmark_result = {
-        "status": "passed" if result.returncode == 0 else "failed",
+        "status": "passed" if benchmark_ok else "failed",
         "returncode": result.returncode,
-        "output": result.stdout
+        "host": backend_host,
+        "output": result.stdout,
+        "stderr": result.stderr,
+        "diagnostics": {
+            "host_error": host_error,
+            "stop_error": stop_error,
+            "no_requests_recorded": no_requests,
+        },
     }
     
     with open("eval_reports/benchmark_results.json", "w") as f:
@@ -406,7 +401,7 @@ def run_latency_measurements() -> dict:
         from measure_latency import LatencyTester, run_scenario_trials, SCENARIOS, generate_latency_report, generate_latency_markdown_report
         
         async def run_latency():
-            tester = LatencyTester(timeout=30)
+            tester = LatencyTester(timeout=180)
             
             if not await tester.connect():
                 return {

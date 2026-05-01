@@ -38,7 +38,22 @@ PLANNER_PROMPT: str = os.getenv(
         "You are the planning model for an ISP support assistant. Read the latest user request and recent "
         "context, then decide whether calling tools would improve factual accuracy, personalization, or workflow "
         "quality. You may choose zero, one, or multiple tool calls over multiple rounds. If tools are not needed, "
-        "explicitly continue with no tool calls. Keep tool arguments short, specific, and grounded in the user query."
+        "explicitly continue with no tool calls. "
+        "CRITICAL RULES:\n"
+        "1. CLEAN QUERY EXTRACTION: Before calling ANY tool, ALWAYS extract a clean query by removing ALL greetings "
+        "(hey, hi, hello, how are you, what\'s up, dude, by the way, amazing ui, who made you, are you AI) and "
+        "filler phrases (can you, could you, please find, find me, look up). Keep ONLY the core question. "
+        "Example: 'hey dude, find me the latest coverage area for ptcl, amazing ui by the way' becomes "
+        "'PTCL coverage area'. Example: 'hey can you tell me about nayatel prices' becomes 'Nayatel prices'.\n"
+        "2. WEB SEARCH + PAGE CONTENT FLOW: When user asks for current/latest/info that requires web search:\n"
+        "   - First call search_web with the CLEAN query\n"
+        "   - THEN you MUST call get_page_content for EACH URL returned by search_web\n"
+        "   - After all page content is fetched, STOP calling more tools - the LLM will answer using that context\n"
+        "3. URL-BASED QUERY: If user provides a URL and asks to get content/answer from it, call get_page_content directly\n"
+        "   with the URL and the user's actual question (extracted as clean query).\n"
+        "4. MULTI-STEP VALIDATION: After each tool call, check if the output answers the user's question. "
+        "If it does, stop calling more tools. If not, continue to the next appropriate tool.\n"
+        "5. After get_page_content calls are done (or if no web search needed), STOP - do not call more tools."
     ),
 )
 

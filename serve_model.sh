@@ -145,6 +145,7 @@ HTTP_THREADS="${LLAMA_HTTP_THREADS:-4}"
 POLL_LEVEL="${LLAMA_POLL_LEVEL:-0}"
 VERBOSE_LOGS="${LLAMA_VERBOSE:-0}"
 LOG_VERBOSE="${LLAMA_LOG_VERBOSE:-0}"
+THINKING="${LLAMA_THINKING:-1}"
 
 # Dynamically infer the chat template based on the model filename
 MODEL_BASENAME=$(basename "$MODEL_PATH" | tr '[:upper:]' '[:lower:]')
@@ -209,8 +210,28 @@ if supports_flag --cache-prompt; then
     CMD="$CMD --cache-prompt"
 fi
 
+if supports_flag --reasoning-budget; then
+    if [ "$THINKING" = "0" ]; then
+        CMD="$CMD --reasoning-budget 0"
+        echo "Thinking mode: DISABLED"
+    else
+        CMD="$CMD --reasoning-budget -1"
+        echo "Thinking mode: ENABLED"
+    fi
+fi
+
 if [ "${LLAMA_MLOCK:-0}" = "1" ] && supports_flag --mlock; then
     CMD="$CMD --mlock"
+fi
+
+CPU_MASK="${LLAMA_CPU_MASK:-}"
+if [ -n "$CPU_MASK" ] && supports_flag --cpu-mask; then
+    CMD="$CMD --cpu-mask $CPU_MASK"
+    echo "CPU affinity mask: $CPU_MASK"
+fi
+
+if supports_flag --flash-attn; then
+    CMD="$CMD --flash-attn off"
 fi
 
 if [ "$VERBOSE_LOGS" = "1" ]; then

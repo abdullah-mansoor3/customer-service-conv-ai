@@ -15,6 +15,7 @@ from locust.contrib.fasthttp import FastHttpUser
 import time
 import json
 import logging
+import os
 from typing import Dict, List
 from datetime import datetime
 
@@ -98,33 +99,34 @@ latency_tracker = LatencyTracker()
 
 class ConversationalAIUser(FastHttpUser):
     """Simulates a user interacting with the conversational AI system."""
+    host = os.getenv("LOCUST_HOST", "http://127.0.0.1:8000")
     
     wait_time = between(2, 5)  # Wait 2-5 seconds between requests
     
     # Messages for different scenarios
     simple_messages = [
         "Hello, how are you?",
-        "What's your name?",
-        "Tell me a joke.",
-        "How can I help you today?",
+        "Thanks for the help!",
+        "Good morning",
+        "Hi there",
     ]
     
     rag_messages = [
-        "What is the refund policy?",
-        "How do I contact support?",
-        "What are the system requirements?",
+        "What is the PTCL helpline number?",
+        "What are Nayatel internet package prices?",
+        "How to configure TP-Link router?",
     ]
     
     tool_messages = [
-        "Get customer details for ID 123",
-        "Create a new customer",
-        "Send me an email",
+        "My name is Ahmed Khan",
+        "What is my name?",
+        "My internet is not working, router lights are red",
     ]
     
     mixed_messages = [
-        "I need help with my account and refund policy",
-        "Search for news and update my customer record",
-        "Get billing info and notify via email",
+        "Check PTCL packages and remember my name is Ali",
+        "My internet is down, what is Nayatel helpline?",
+        "Troubleshoot DNS error and tell me PTCL prices",
     ]
     
     all_messages = simple_messages + rag_messages + tool_messages + mixed_messages
@@ -172,22 +174,22 @@ class ConversationalAIUser(FastHttpUser):
         first_token_time = None
         
         try:
-            # Send POST request to chat endpoint
+            # Send POST request to session endpoint (compatible with current backend routes)
             response = self.client.post(
-                "/chat",
+                "/api/sessions",
                 json={
                     "message": message,
                     "session_id": self.user_id,
                     "timestamp": datetime.now().isoformat()
                 },
-                name="/chat"
+                name="/api/sessions"
             )
             
             request_time = time.time() - start_time
             
             # If response is streaming, measure first token time
             # For non-streaming, measure full response time
-            if response.status_code == 200:
+            if response.status_code in {200, 201}:
                 try:
                     data = response.json()
                     

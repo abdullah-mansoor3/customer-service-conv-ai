@@ -21,10 +21,12 @@ def _normalize_state(known_state: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _has_value(value: Any) -> bool:
+def _has_value(value: Any, field: str | None = None) -> bool:
     if value is None:
         return False
     text = str(value).strip().lower()
+    if field == "error_message" and text == "none":
+        return True
     return text not in {"", "null", "none", "unknown"}
 
 
@@ -48,7 +50,7 @@ def next_best_question(known_state: dict[str, Any]) -> dict[str, Any]:
         "router_model",
     ]
 
-    missing_fields = [key for key in priority if not _has_value(state.get(key))]
+    missing_fields = [key for key in priority if not _has_value(state.get(key), key)]
     if not missing_fields:
         return {
             "question": "Can you confirm whether the connection is stable now?",

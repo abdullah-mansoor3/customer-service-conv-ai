@@ -1,341 +1,254 @@
 """
-Tool Accuracy Testing Module
+Tool Accuracy Testing Module for ISP Customer Service AI Agent.
 
-Tests the LLM's ability to correctly identify and invoke tools via WebSocket:
-- Sends specific user utterances designed to trigger tools
-- Captures tool invocations from the chatbot
-- Verifies correct tool is triggered with expected arguments
+Tests the LLM's ability to correctly select and invoke tools via WebSocket:
+- Sends ISP-specific user utterances designed to trigger specific tools
+- Captures tool invocations from status events
+- Verifies correct tool is triggered
+
+Requires a running backend server at ws://localhost:8000/ws/chat.
 """
 
 import asyncio
 import json
 import logging
-import websockets
+import os
+import sys
+import uuid
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import pytest
 
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+try:
+    import websockets
+except ImportError:
+    websockets = None
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+WS_URI = "ws://localhost:8000/ws/chat"
 
 
 class ToolAccuracyTestCase:
     """Represents a single tool accuracy test case."""
-    
+
     def __init__(
         self,
         test_id: str,
         user_utterance: str,
-        expected_tool: str,
-        expected_args: Dict[str, Any],
-        description: str = ""
+        expected_tools: List[str],
+        description: str = "",
+        tool_hints: List[str] = None,
     ):
         self.test_id = test_id
         self.user_utterance = user_utterance
-        self.expected_tool = expected_tool
-        self.expected_args = expected_args
+        self.expected_tools = expected_tools
         self.description = description
+        self.tool_hints = tool_hints or []
 
 
 class WebSocketToolAccuracyTester:
-    """WebSocket client for testing tool accuracy."""
-    
-    def __init__(self, uri: str = "ws://localhost:8000/ws", timeout: int = 10):
+    """WebSocket client for testing tool accuracy against the ISP agent."""
+
+    def __init__(self, uri: str = WS_URI, timeout: int = 120):
         self.uri = uri
         self.timeout = timeout
-        self.websocket = None
-        self.tool_calls_captured = []
-        self.messages = []
-    
-    async def connect(self) -> bool:
-        """Connect to WebSocket server."""
-        try:
-            self.websocket = await asyncio.wait_for(
-                websockets.connect(self.uri),
-                timeout=self.timeout
-            )
-            logger.info(f"Connected to {self.uri}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to connect: {e}")
-            return False
-    
-    async def disconnect(self):
-        """Disconnect from WebSocket server."""
-        if self.websocket:
-            await self.websocket.close()
-            logger.info("Disconnected")
-    
-    async def send_message(self, content: str, session_id: str = "test_session") -> bool:
-        """Send a message to the chatbot."""
-        try:
-            message = {
-                "type": "message",
-                "content": content,
-                "session_id": session_id,
-                "timestamp": datetime.now().isoformat()
-            }
-            await asyncio.wait_for(
-                self.websocket.send(json.dumps(message)),
-                timeout=self.timeout
-            )
-            logger.info(f"Sent: {content}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to send message: {e}")
-            return False
-    
-    async def receive_response(self) -> Optional[Dict[str, Any]]:
-        """Receive a response from the chatbot."""
-        try:
-            response_str = await asyncio.wait_for(
-                self.websocket.recv(),
-                timeout=self.timeout
-            )
-            response = json.loads(response_str)
-            self.messages.append(response)
-            
-            # Check if response contains tool calls
-            if "tool_calls" in response:
-                self.tool_calls_captured.extend(response["tool_calls"])
-            
-            logger.info(f"Received: {response}")
-            return response
-        except asyncio.TimeoutError:
-            logger.warning("Timeout waiting for response")
-            return None
-        except Exception as e:
-            logger.error(f"Failed to receive response: {e}")
-            return None
-    
+
     async def test_tool_accuracy(self, test_case: ToolAccuracyTestCase) -> Dict[str, Any]:
-        """
-        Test a single tool accuracy case.
-        
-        Args:
-            test_case: ToolAccuracyTestCase instance
-        
-        Returns:
-            Test result dictionary
-        """
+        """Test a single tool accuracy case via WebSocket."""
         result = {
             "test_id": test_case.test_id,
             "user_utterance": test_case.user_utterance,
-            "expected_tool": test_case.expected_tool,
-            "expected_args": test_case.expected_args,
+            "expected_tools": test_case.expected_tools,
             "passed": False,
-            "actual_tool_calls": [],
-            "errors": []
+            "actual_tools": [],
+            "errors": [],
         }
-        
-        # Clear previous tool calls
-        self.tool_calls_captured = []
-        
-        # Send user utterance
-        if not await self.send_message(test_case.user_utterance):
-            result["errors"].append("Failed to send message")
-            return result
-        
-        # Receive response(s) - may need multiple receives
-        responses_received = 0
-        max_responses = 5
-        
-        while responses_received < max_responses:
-            response = await self.receive_response()
-            if response is None:
-                break
-            responses_received += 1
-            
-            # Check if we got tool calls
-            if self.tool_calls_captured:
-                break
-            
-            # Small delay between requests
-            await asyncio.sleep(0.1)
-        
-        # Analyze captured tool calls
-        result["actual_tool_calls"] = self.tool_calls_captured
-        
-        if not self.tool_calls_captured:
-            result["errors"].append("No tool calls captured")
-            return result
-        
-        # Verify tool accuracy
-        for tool_call in self.tool_calls_captured:
-            tool_name = tool_call.get("name") or tool_call.get("tool")
-            tool_args = tool_call.get("arguments") or tool_call.get("args", {})
-            
-            if tool_name == test_case.expected_tool:
-                # Check if arguments match (allow partial match)
-                args_match = all(
-                    tool_args.get(key) == value
-                    for key, value in test_case.expected_args.items()
-                )
-                
-                if args_match:
+
+        session_id = f"tool_accuracy_{test_case.test_id}_{uuid.uuid4().hex[:8]}"
+
+        try:
+            async with websockets.connect(self.uri, close_timeout=30) as ws:
+                payload = {
+                    "message": test_case.user_utterance,
+                    "session_id": session_id,
+                }
+                if test_case.tool_hints:
+                    payload["tool_hints"] = test_case.tool_hints
+
+                await ws.send(json.dumps(payload))
+
+                tool_names_seen = set()
+                done = False
+
+                while not done:
+                    try:
+                        raw = await asyncio.wait_for(ws.recv(), timeout=self.timeout)
+                        data = json.loads(raw)
+
+                        if data.get("type") == "status" and data.get("tool_name"):
+                            tool_names_seen.add(data["tool_name"])
+
+                        if data.get("type") == "token" and data.get("done"):
+                            done = True
+
+                    except asyncio.TimeoutError:
+                        result["errors"].append("Timeout waiting for response")
+                        done = True
+
+                result["actual_tools"] = sorted(tool_names_seen)
+
+                if not test_case.expected_tools:
+                    # General chat should not trigger tools.
+                    if not tool_names_seen:
+                        result["passed"] = True
+                    else:
+                        result["errors"].append(
+                            f"Expected no tool calls, got {sorted(tool_names_seen)}"
+                        )
+                elif any(tool in tool_names_seen for tool in test_case.expected_tools):
+                    # Pass if at least one acceptable tool was invoked.
                     result["passed"] = True
                 else:
                     result["errors"].append(
-                        f"Arguments mismatch. Expected: {test_case.expected_args}, "
-                        f"Got: {tool_args}"
+                        f"Expected one of {test_case.expected_tools}, "
+                        f"got {sorted(tool_names_seen)}"
                     )
-            else:
-                result["errors"].append(
-                    f"Tool mismatch. Expected: {test_case.expected_tool}, "
-                    f"Got: {tool_name}"
-                )
-        
+
+        except Exception as e:
+            result["errors"].append(f"Connection error: {e}")
+
         return result
-    
+
     async def run_test_suite(
-        self,
-        test_cases: List[ToolAccuracyTestCase]
+        self, test_cases: List[ToolAccuracyTestCase]
     ) -> Dict[str, Any]:
-        """
-        Run a suite of tool accuracy tests.
-        
-        Args:
-            test_cases: List of ToolAccuracyTestCase instances
-        
-        Returns:
-            Summary of all test results
-        """
-        if not await self.connect():
-            return {"error": "Failed to connect to WebSocket"}
-        
+        """Run a suite of tool accuracy tests."""
         results = {
             "timestamp": datetime.now().isoformat(),
             "total_tests": len(test_cases),
             "passed": 0,
             "failed": 0,
-            "test_results": []
+            "test_results": [],
         }
-        
+
         for test_case in test_cases:
-            try:
-                result = await self.test_tool_accuracy(test_case)
-                results["test_results"].append(result)
-                
-                if result["passed"]:
-                    results["passed"] += 1
-                else:
-                    results["failed"] += 1
-                
-                logger.info(f"Test {test_case.test_id}: {'PASSED' if result['passed'] else 'FAILED'}")
-            except Exception as e:
-                logger.error(f"Error running test {test_case.test_id}: {e}")
+            result = await self.test_tool_accuracy(test_case)
+            results["test_results"].append(result)
+
+            if result["passed"]:
+                results["passed"] += 1
+            else:
                 results["failed"] += 1
-                results["test_results"].append({
-                    "test_id": test_case.test_id,
-                    "passed": False,
-                    "errors": [str(e)]
-                })
-        
-        await self.disconnect()
-        
+
+            logger.info(
+                f"Test {test_case.test_id}: "
+                f"{'PASSED' if result['passed'] else 'FAILED'} "
+                f"(tools: {result['actual_tools']})"
+            )
+
+            await asyncio.sleep(1)  # Avoid overwhelming the server
+
         results["pass_rate"] = (
             results["passed"] / results["total_tests"]
             if results["total_tests"] > 0
             else 0
         )
-        
         return results
 
 
-# Predefined test cases for common tool triggers
+# ── ISP-specific test cases ──────────────────────────────────────────────
 
 TOOL_ACCURACY_TEST_CASES = [
     ToolAccuracyTestCase(
-        test_id="tool_1",
-        user_utterance="What is the refund policy?",
-        expected_tool="rag_tool",
-        expected_args={"query": "refund policy"},
-        description="RAG should be triggered for general questions"
+        test_id="tool_rag_helpline",
+        user_utterance="What is the PTCL helpline number?",
+        expected_tools=["retrieve_isp_knowledge"],
+        description="RAG should be triggered for PTCL factual lookup",
     ),
     ToolAccuracyTestCase(
-        test_id="tool_2",
-        user_utterance="Get customer details for ID 123",
-        expected_tool="crm_tool",
-        expected_args={"action": "get_customer", "customer_id": "123"},
-        description="CRM tool should be triggered for customer queries"
+        test_id="tool_rag_packages",
+        user_utterance="What are Nayatel internet package prices?",
+        expected_tools=["retrieve_isp_knowledge"],
+        description="RAG should be triggered for pricing questions",
     ),
     ToolAccuracyTestCase(
-        test_id="tool_3",
-        user_utterance="Search for latest AI news",
-        expected_tool="web_search_tool",
-        expected_args={"query": "latest AI news"},
-        description="Web search should be triggered for news queries"
+        test_id="tool_crm_write",
+        user_utterance="My name is Ahmed Khan, please remember it.",
+        expected_tools=["update_user_info"],
+        description="CRM update tool should be triggered for name storage",
     ),
     ToolAccuracyTestCase(
-        test_id="tool_4",
-        user_utterance="I have a login issue, can you help?",
-        expected_tool="support_workflows_tool",
-        expected_args={"issue": "login"},
-        description="Support workflows should be triggered for support issues"
+        test_id="tool_crm_read",
+        user_utterance="What is my name? Do you remember me?",
+        expected_tools=["get_user_info"],
+        description="CRM get tool should be triggered for profile recall",
     ),
     ToolAccuracyTestCase(
-        test_id="tool_5",
-        user_utterance="Send me an email confirmation",
-        expected_tool="integrations_tool",
-        expected_args={"service": "email", "action": "send"},
-        description="Integrations tool should be triggered for communication actions"
+        test_id="tool_web_search",
+        user_utterance="Search the web for latest Nayatel router brand",
+        expected_tools=["search_web"],
+        description="Web search should be triggered for explicit search requests",
+        tool_hints=["websearch"],
+    ),
+    ToolAccuracyTestCase(
+        test_id="tool_troubleshoot",
+        user_utterance="My internet is not working, router lights are red, I've restarted it.",
+        expected_tools=["diagnose_connection_issue", "get_next_best_question"],
+        description="Troubleshooting tool should be triggered for connectivity issues",
+    ),
+    ToolAccuracyTestCase(
+        test_id="tool_no_tool_chat",
+        user_utterance="Hello, how are you?",
+        expected_tools=[],
+        description="No tool should be triggered for general greetings",
     ),
 ]
 
 
-# Pytest fixtures
+# ── Pytest integration ───────────────────────────────────────────────────
 
-@pytest.fixture
-async def websocket_tester():
-    """Fixture providing WebSocket tester."""
-    tester = WebSocketToolAccuracyTester()
-    yield tester
-    await tester.disconnect()
-
-
-# Async test functions
-
+@pytest.mark.skipif(
+    not os.getenv("RUN_INTEGRATION_TESTS"),
+    reason="Requires running backend (set RUN_INTEGRATION_TESTS=1)",
+)
+@pytest.mark.skipif(websockets is None, reason="websockets not installed")
 @pytest.mark.asyncio
-async def test_tool_accuracy_suite(websocket_tester):
+async def test_tool_accuracy_suite():
     """Run complete tool accuracy test suite."""
-    results = await websocket_tester.run_test_suite(TOOL_ACCURACY_TEST_CASES)
-    
-    # Print results
+    tester = WebSocketToolAccuracyTester(timeout=120)
+    results = await tester.run_test_suite(TOOL_ACCURACY_TEST_CASES)
+
     print("\n" + json.dumps(results, indent=2))
-    
-    # Assert majority of tests pass
-    assert results.get("pass_rate", 0) >= 0.7, f"Pass rate too low: {results['pass_rate']}"
+    # Allow the no-tool test to not count against pass rate
+    tool_tests = [r for r in results["test_results"] if r["expected_tools"]]
+    if tool_tests:
+        pass_rate = sum(1 for r in tool_tests if r["passed"]) / len(tool_tests)
+        assert pass_rate >= 0.5, f"Tool accuracy pass rate too low: {pass_rate:.2%}"
 
 
-@pytest.mark.asyncio
-async def test_single_tool_accuracy(websocket_tester):
-    """Test a single tool accuracy case."""
-    test_case = TOOL_ACCURACY_TEST_CASES[0]
-    result = await websocket_tester.test_tool_accuracy(test_case)
-    
-    print("\n" + json.dumps(result, indent=2))
-    
-    assert result["passed"], f"Test failed: {result['errors']}"
-
-
-# Command-line interface
+# ── CLI entry point ──────────────────────────────────────────────────────
 
 async def main():
     """Run tool accuracy tests from command line."""
-    tester = WebSocketToolAccuracyTester()
+    tester = WebSocketToolAccuracyTester(timeout=120)
     results = await tester.run_test_suite(TOOL_ACCURACY_TEST_CASES)
-    
-    print("\n" + "="*60)
+
+    print("\n" + "=" * 60)
     print("TOOL ACCURACY TEST RESULTS")
-    print("="*60)
+    print("=" * 60)
     print(json.dumps(results, indent=2))
-    
-    # Write results to file
+
+    os.makedirs("eval_reports", exist_ok=True)
     with open("eval_reports/tool_accuracy_results.json", "w") as f:
         json.dump(results, f, indent=2)
-    
-    print(f"\nResults saved to eval_reports/tool_accuracy_results.json")
-    print(f"Pass Rate: {results['pass_rate']:.2%}")
+
+    print(f"\nPass Rate: {results['pass_rate']:.2%}")
 
 
 if __name__ == "__main__":

@@ -31,6 +31,35 @@ from rag.config import (
 from rag.metadata import detect_provider_in_query
 
 
+def preload_models() -> None:
+    """Preload SentenceTransformer models from local cache to avoid hitting HuggingFace API."""
+    import os
+    
+    # First, try to load from local cache only (no API calls)
+    # This ensures we don't hit HuggingFace on every startup
+    try:
+        _ = SentenceTransformer(EMBEDDING_MODEL, local_files_only=True)
+    except Exception:
+        # If not in cache, download silently without hitting the API repeatedly
+        # Use HF_HUB_OFFLINE to prevent version checks
+        original_offline = os.environ.get("HF_HUB_OFFLINE", "0")
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        try:
+            _ = SentenceTransformer(EMBEDDING_MODEL)
+        finally:
+            os.environ["HF_HUB_OFFLINE"] = original_offline
+    
+    try:
+        _ = CrossEncoder(RERANK_MODEL, local_files_only=True)
+    except Exception:
+        original_offline = os.environ.get("HF_HUB_OFFLINE", "0")
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        try:
+            _ = CrossEncoder(RERANK_MODEL)
+        finally:
+            os.environ["HF_HUB_OFFLINE"] = original_offline
+
+
 GROUNDING_PROMPT_TEMPLATE = """You are a customer support assistant for ISP providers.
 Answer the user's question ONLY using the context provided below.
 If the context does not contain enough information to answer, say:
@@ -46,6 +75,7 @@ Answer:"""
 
 @dataclass
 class RetrievedChunk:
+    chunk_id: str
     text: str
     metadata: dict[str, Any]
     similarity: float
@@ -64,8 +94,15 @@ class RAGEngine:
         cache_capacity: int = SEMANTIC_CACHE_CAPACITY,
         cache_threshold: float = SEMANTIC_CACHE_THRESHOLD,
     ):
-        self.embedder = SentenceTransformer(EMBEDDING_MODEL)
-        self.reranker = CrossEncoder(RERANK_MODEL)
+        try:
+            self.embedder = SentenceTransformer(EMBEDDING_MODEL, local_files_only=True)
+        except Exception:
+            self.embedder = SentenceTransformer(EMBEDDING_MODEL)
+        
+        try:
+            self.reranker = CrossEncoder(RERANK_MODEL, local_files_only=True)
+        except Exception:
+            self.reranker = CrossEncoder(RERANK_MODEL)
         self.cache = SemanticLRUCache(capacity=cache_capacity, similarity_threshold=cache_threshold)
 
         self.client = chromadb.PersistentClient(path=str(chroma_dir))
@@ -100,11 +137,15 @@ class RAGEngine:
         docs = (result.get("documents") or [[]])[0]
         metadatas = (result.get("metadatas") or [[]])[0]
         distances = (result.get("distances") or [[]])[0]
+        ids = (result.get("ids") or [[]])[0]
+        if not ids:
+            ids = [f"retrieved-{index}" for index, _ in enumerate(docs)]
 
         chunks: list[RetrievedChunk] = []
-        for doc, metadata, distance in zip(docs, metadatas, distances, strict=False):
+        for chunk_id, doc, metadata, distance in zip(ids, docs, metadatas, distances, strict=False):
             chunks.append(
                 RetrievedChunk(
+                    chunk_id=str(chunk_id),
                     text=doc,
                     metadata=metadata or {},
                     similarity=self._safe_similarity_from_distance(distance),
@@ -299,6 +340,7 @@ class RAGEngine:
             "context": context,
             "retrieved": [
                 {
+                    "chunk_id": c.chunk_id,
                     "similarity": c.similarity,
                     "rerank_score": c.rerank_score,
                     "metadata": c.metadata,

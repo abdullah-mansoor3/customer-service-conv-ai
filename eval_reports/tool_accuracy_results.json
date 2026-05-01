@@ -1,0 +1,92 @@
+{
+  "timestamp": "2026-05-01T12:25:47.278056",
+  "total_tests": 7,
+  "passed": 7,
+  "failed": 0,
+  "test_results": [
+    {
+      "test_id": "tool_rag_helpline",
+      "user_utterance": "What is the PTCL helpline number?",
+      "expected_tools": [
+        "retrieve_isp_knowledge"
+      ],
+      "passed": true,
+      "actual_tools": [
+        "retrieve_isp_knowledge"
+      ],
+      "errors": []
+    },
+    {
+      "test_id": "tool_rag_packages",
+      "user_utterance": "What are Nayatel internet package prices?",
+      "expected_tools": [
+        "retrieve_isp_knowledge"
+      ],
+      "passed": true,
+      "actual_tools": [
+        "retrieve_isp_knowledge"
+      ],
+      "errors": []
+    },
+    {
+      "test_id": "tool_crm_write",
+      "user_utterance": "My name is Ahmed Khan, please remember it.",
+      "expected_tools": [
+        "update_user_info"
+      ],
+      "passed": true,
+      "actual_tools": [
+        "update_user_info"
+      ],
+      "errors": []
+    },
+    {
+      "test_id": "tool_crm_read",
+      "user_utterance": "What is my name? Do you remember me?",
+      "expected_tools": [
+        "get_user_info"
+      ],
+      "passed": true,
+      "actual_tools": [
+        "get_user_info"
+      ],
+      "errors": []
+    },
+    {
+      "test_id": "tool_web_search",
+      "user_utterance": "Search the web for latest Nayatel router brand",
+      "expected_tools": [
+        "search_web"
+      ],
+      "passed": true,
+      "actual_tools": [
+        "diagnose_connection_issue",
+        "get_page_content",
+        "search_web"
+      ],
+      "errors": []
+    },
+    {
+      "test_id": "tool_troubleshoot",
+      "user_utterance": "My internet is not working, router lights are red, I've restarted it.",
+      "expected_tools": [
+        "diagnose_connection_issue",
+        "get_next_best_question"
+      ],
+      "passed": true,
+      "actual_tools": [
+        "diagnose_connection_issue"
+      ],
+      "errors": []
+    },
+    {
+      "test_id": "tool_no_tool_chat",
+      "user_utterance": "Hello, how are you?",
+      "expected_tools": [],
+      "passed": true,
+      "actual_tools": [],
+      "errors": []
+    }
+  ],
+  "pass_rate": 1.0
+}

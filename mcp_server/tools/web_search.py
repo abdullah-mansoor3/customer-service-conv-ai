@@ -201,6 +201,9 @@ def _normalize_query(query: str) -> str:
     replacements = [
         r"^can you\s+",
         r"^could you\s+",
+        r"^could you give me\s+",
+        r"^please give me\s+",
+        r"^give me\s+",
         r"^please\s+",
         r"^i want to learn about\s+",
         r"^i want to know\s+",
@@ -212,6 +215,20 @@ def _normalize_query(query: str) -> str:
     ]
     for pattern in replacements:
         cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+
+    greeting_patterns = [
+        r"\bhow are you\b.*",
+        r"\bhow('s| is) you\b.*",
+        r"\bhow('s| is) it going\b.*",
+        r"\bhow do you do\b.*",
+        r"\byou doing\b.*",
+        r"\bhi\b",
+        r"\bhello\b",
+        r"\bhey\b",
+        r"\bwhat('s| is) up\b.*",
+    ]
+    for pattern in greeting_patterns:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
 
     cleaned = re.sub(r"[\?\!\"']", " ", cleaned)
     cleaned = " ".join(cleaned.split())
@@ -234,6 +251,10 @@ def _normalize_query(query: str) -> str:
 
     if "ptcl" in lower and ("helpline" in lower or "contact" in lower or "complaint" in lower):
         return "PTCL helpline number complaint contact"
+
+    # Targeted normalization for coverage/coverage-area queries so we prefer PTCL domains
+    if "ptcl" in lower and any(token in lower for token in ["coverage", "coverage area", "coverage areas", "coverage portal", "coverage map"]):
+        return "PTCL coverage portal site:ptcl.com.pk site:ptclflashfiber.com"
 
     if "ptcl" in lower and ("price" in lower or "pricing" in lower or "package" in lower or "plan" in lower):
         return "PTCL internet package prices PKR"
