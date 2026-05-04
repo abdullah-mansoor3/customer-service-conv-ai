@@ -463,7 +463,7 @@ def run_judge_evaluation() -> dict:
     try:
         import asyncio
         from eval_judge import (
-            RubricJudge, load_dialogues, load_human_annotations,
+            GroqJudge, load_dialogues, load_human_annotations,
             generate_agreement_report, generate_markdown_report
         )
         
@@ -477,7 +477,7 @@ def run_judge_evaluation() -> dict:
         logger.info(f"Loaded annotations for {len(human_annotations)} dialogues")
         
         # Initialize judge
-        judge = RubricJudge()
+        judge = GroqJudge()
         
         # Evaluate each dialogue
         print("Evaluating dialogues with LLM-as-Judge...")

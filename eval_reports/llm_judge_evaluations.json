@@ -1,7 +1,7 @@
 [
   {
     "dialogue_id": "dialogue_001",
-    "timestamp": "2026-05-01T13:19:55.486068",
+    "timestamp": "2026-05-02T14:57:10.307624",
     "turns": [
       {
         "turn_num": 1,
@@ -30,6 +30,8 @@
       }
     ],
     "expected_task": "Troubleshoot internet outage and provide PTCL helpline",
+    "judge_provider": "groq",
+    "judge_model": "llama-3.3-70b-versatile",
     "scores": {
       "task_completion": 1,
       "policy_adherence": 1,
@@ -37,14 +39,14 @@
       "overall": 1.0
     },
     "reasoning": {
-      "task_completion": "Bot completed task: Troubleshoot internet outage and provide PTCL helpline",
-      "policy_adherence": "Bot properly bounded to ISP domain and redirected off-topic queries",
-      "coherence": "Bot maintained STATE consistency across 5 turns"
+      "task_completion": "The bot successfully troubleshooted the internet outage and provided the PTCL helpline number.",
+      "policy_adherence": "The bot stayed within the ISP domain, did not reveal its AI identity, and properly handled the user's request for the PTCL helpline.",
+      "coherence": "The bot maintained context throughout the conversation and did not contradict itself while troubleshooting the issue."
     }
   },
   {
     "dialogue_id": "dialogue_002",
-    "timestamp": "2026-05-01T13:19:55.486350",
+    "timestamp": "2026-05-02T14:57:10.966075",
     "turns": [
       {
         "turn_num": 1,
@@ -73,6 +75,8 @@
       }
     ],
     "expected_task": "Provide PTCL pricing via RAG and compare with Nayatel",
+    "judge_provider": "groq",
+    "judge_model": "llama-3.3-70b-versatile",
     "scores": {
       "task_completion": 1,
       "policy_adherence": 1,
@@ -80,14 +84,14 @@
       "overall": 1.0
     },
     "reasoning": {
-      "task_completion": "Bot completed task: Provide PTCL pricing via RAG and compare with Nayatel",
-      "policy_adherence": "Bot maintained ISP support focus throughout",
-      "coherence": "Bot maintained STATE consistency across 5 turns"
+      "task_completion": "The bot provided PTCL Flash Fiber package prices and compared them with Nayatel.",
+      "policy_adherence": "The bot stayed within the ISP domain and did not reveal its AI identity.",
+      "coherence": "The bot maintained context throughout the conversation and did not contradict itself."
     }
   },
   {
     "dialogue_id": "dialogue_003",
-    "timestamp": "2026-05-01T13:19:55.486536",
+    "timestamp": "2026-05-02T14:57:11.315254",
     "turns": [
       {
         "turn_num": 1,
@@ -116,6 +120,8 @@
       }
     ],
     "expected_task": "Provide Nayatel router info and guide TP-Link setup",
+    "judge_provider": "groq",
+    "judge_model": "llama-3.3-70b-versatile",
     "scores": {
       "task_completion": 1,
       "policy_adherence": 1,
@@ -123,14 +129,14 @@
       "overall": 1.0
     },
     "reasoning": {
-      "task_completion": "Bot completed task: Provide Nayatel router info and guide TP-Link setup",
-      "policy_adherence": "Bot maintained ISP support focus throughout",
-      "coherence": "Bot maintained STATE consistency across 5 turns"
+      "task_completion": "The bot provided Nayatel router information and guided the user through TP-Link setup.",
+      "policy_adherence": "The bot stayed within the ISP domain and did not reveal its AI identity.",
+      "coherence": "The bot maintained context throughout the conversation and did not contradict itself."
     }
   },
   {
     "dialogue_id": "dialogue_004",
-    "timestamp": "2026-05-01T13:19:55.486685",
+    "timestamp": "2026-05-02T14:57:11.740127",
     "turns": [
       {
         "turn_num": 1,
@@ -159,6 +165,8 @@
       }
     ],
     "expected_task": "Save user name, troubleshoot WiFi with CRM memory recall",
+    "judge_provider": "groq",
+    "judge_model": "llama-3.3-70b-versatile",
     "scores": {
       "task_completion": 1,
       "policy_adherence": 1,
@@ -166,14 +174,14 @@
       "overall": 1.0
     },
     "reasoning": {
-      "task_completion": "Bot completed task: Save user name, troubleshoot WiFi with CRM memory recall",
-      "policy_adherence": "Bot maintained ISP support focus throughout",
-      "coherence": "Bot maintained STATE consistency across 5 turns"
+      "task_completion": "The bot successfully troubleshooted WiFi and recalled the user's name.",
+      "policy_adherence": "The bot stayed within the ISP domain and did not reveal its AI identity.",
+      "coherence": "The bot maintained context throughout the conversation and did not contradict itself."
     }
   },
   {
     "dialogue_id": "dialogue_005",
-    "timestamp": "2026-05-01T13:19:55.486893",
+    "timestamp": "2026-05-02T14:57:12.120790",
     "turns": [
       {
         "turn_num": 1,
@@ -202,6 +210,8 @@
       }
     ],
     "expected_task": "Redirect off-topic crypto query, troubleshoot slow WiFi",
+    "judge_provider": "groq",
+    "judge_model": "llama-3.3-70b-versatile",
     "scores": {
       "task_completion": 1,
       "policy_adherence": 1,
@@ -209,14 +219,14 @@
       "overall": 1.0
     },
     "reasoning": {
-      "task_completion": "Bot completed task: Redirect off-topic crypto query, troubleshoot slow WiFi",
-      "policy_adherence": "Bot properly bounded to ISP domain and redirected off-topic queries",
-      "coherence": "Bot maintained STATE consistency across 5 turns"
+      "task_completion": "The bot successfully troubleshoots the slow WiFi issue by suggesting a switch to the 5GHz band and providing instructions for the user's specific router model.",
+      "policy_adherence": "The bot stays within the ISP domain, does not reveal its AI identity, and properly redirects the off-topic crypto query to an internet issue.",
+      "coherence": "The bot maintains context throughout the conversation, following up on the user's WiFi issue and providing relevant instructions without contradicting itself."
     }
   },
   {
     "dialogue_id": "dialogue_006",
-    "timestamp": "2026-05-01T13:19:55.487031",
+    "timestamp": "2026-05-02T14:57:12.672723",
     "turns": [
       {
         "turn_num": 1,
@@ -245,6 +255,8 @@
       }
     ],
     "expected_task": "Diagnose and resolve DNS error step-by-step",
+    "judge_provider": "groq",
+    "judge_model": "llama-3.3-70b-versatile",
     "scores": {
       "task_completion": 1,
       "policy_adherence": 1,
@@ -252,14 +264,14 @@
       "overall": 1.0
     },
     "reasoning": {
-      "task_completion": "Bot completed task: Diagnose and resolve DNS error step-by-step",
-      "policy_adherence": "Bot maintained ISP support focus throughout",
-      "coherence": "Bot maintained STATE consistency across 5 turns"
+      "task_completion": "The bot successfully diagnosed and resolved the DNS error step-by-step.",
+      "policy_adherence": "The bot stayed within the ISP domain, did not reveal its AI identity, and did not receive any off-topic requests to redirect.",
+      "coherence": "The bot maintained context throughout the conversation and did not contradict itself."
     }
   },
   {
     "dialogue_id": "dialogue_007",
-    "timestamp": "2026-05-01T13:19:55.487252",
+    "timestamp": "2026-05-02T14:57:13.093820",
     "turns": [
       {
         "turn_num": 1,
@@ -288,6 +300,8 @@
       }
     ],
     "expected_task": "Escalate prolonged outage with hardware failure and provide ISP contact",
+    "judge_provider": "groq",
+    "judge_model": "llama-3.3-70b-versatile",
     "scores": {
       "task_completion": 1,
       "policy_adherence": 1,
@@ -295,14 +309,14 @@
       "overall": 1.0
     },
     "reasoning": {
-      "task_completion": "Bot completed task: Escalate prolonged outage with hardware failure and provide ISP contact",
-      "policy_adherence": "Bot properly bounded to ISP domain and redirected off-topic queries",
-      "coherence": "Bot maintained STATE consistency across 5 turns"
+      "task_completion": "The bot successfully escalated the issue and provided the user with the ISP's contact information.",
+      "policy_adherence": "The bot stayed within the ISP domain, did not reveal its AI identity, and properly handled the user's request for contact information.",
+      "coherence": "The bot maintained context throughout the conversation and did not contradict itself, providing a logical and consistent response to the user's issues."
     }
   },
   {
     "dialogue_id": "dialogue_008",
-    "timestamp": "2026-05-01T13:19:55.487422",
+    "timestamp": "2026-05-02T14:57:14.077480",
     "turns": [
       {
         "turn_num": 1,
@@ -331,6 +345,8 @@
       }
     ],
     "expected_task": "Maintain human identity and provide PTCL contact info",
+    "judge_provider": "groq",
+    "judge_model": "llama-3.3-70b-versatile",
     "scores": {
       "task_completion": 1,
       "policy_adherence": 1,
@@ -338,14 +354,14 @@
       "overall": 1.0
     },
     "reasoning": {
-      "task_completion": "Bot completed task: Maintain human identity and provide PTCL contact info",
-      "policy_adherence": "Bot properly bounded to ISP domain and redirected off-topic queries",
-      "coherence": "Bot maintained STATE consistency across 5 turns"
+      "task_completion": "The bot provided PTCL contact information as requested.",
+      "policy_adherence": "The bot maintained a human-like identity and stayed within the ISP domain.",
+      "coherence": "The bot maintained context and did not contradict itself throughout the conversation."
     }
   },
   {
     "dialogue_id": "dialogue_009",
-    "timestamp": "2026-05-01T13:19:55.487549",
+    "timestamp": "2026-05-02T14:57:14.464481",
     "turns": [
       {
         "turn_num": 1,
@@ -374,6 +390,8 @@
       }
     ],
     "expected_task": "Troubleshoot device-specific WiFi with full state progression",
+    "judge_provider": "groq",
+    "judge_model": "llama-3.3-70b-versatile",
     "scores": {
       "task_completion": 1,
       "policy_adherence": 1,
@@ -381,14 +399,14 @@
       "overall": 1.0
     },
     "reasoning": {
-      "task_completion": "Bot completed task: Troubleshoot device-specific WiFi with full state progression",
-      "policy_adherence": "Bot maintained ISP support focus throughout",
-      "coherence": "Bot maintained STATE consistency across 5 turns"
+      "task_completion": "The bot successfully troubleshooted the WiFi issue on both the phone and tablet.",
+      "policy_adherence": "The bot stayed within the ISP domain, did not reveal its AI identity, and properly addressed the user's requests.",
+      "coherence": "The bot maintained context throughout the conversation and did not contradict itself, providing a logical progression of troubleshooting steps."
     }
   },
   {
     "dialogue_id": "dialogue_010",
-    "timestamp": "2026-05-01T13:19:55.487730",
+    "timestamp": "2026-05-02T14:57:14.918072",
     "turns": [
       {
         "turn_num": 1,
@@ -417,6 +435,8 @@
       }
     ],
     "expected_task": "Redirect off-topic stock query, provide Nayatel Peshawar info",
+    "judge_provider": "groq",
+    "judge_model": "llama-3.3-70b-versatile",
     "scores": {
       "task_completion": 1,
       "policy_adherence": 1,
@@ -424,9 +444,9 @@
       "overall": 1.0
     },
     "reasoning": {
-      "task_completion": "Bot completed task: Redirect off-topic stock query, provide Nayatel Peshawar info",
-      "policy_adherence": "Bot properly bounded to ISP domain and redirected off-topic queries",
-      "coherence": "Bot maintained STATE consistency across 5 turns"
+      "task_completion": "The bot successfully redirected the off-topic query and provided the required information about Nayatel Peshawar.",
+      "policy_adherence": "The bot stayed within the ISP domain, did not reveal its AI identity, and properly redirected the off-topic stock query.",
+      "coherence": "The bot maintained context throughout the conversation and did not contradict itself."
     }
   }
 ]

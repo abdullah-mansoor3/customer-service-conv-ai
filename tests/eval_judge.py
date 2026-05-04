@@ -16,6 +16,7 @@ from typing import Dict, List, Any
 from datetime import datetime
 import logging
 from statistics import mean, median
+import httpx
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
@@ -284,6 +285,198 @@ class RubricJudge:
         }
 
 
+class GroqJudge:
+    """
+    LLM-as-a-Judge using Groq API (OpenAI-compatible) for rubric scoring.
+
+    Expects JSON output with scores and per-metric reasoning.
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        api_base: str | None = None,
+        temperature: float | None = None,
+        timeout_sec: float | None = None,
+    ) -> None:
+        self.api_key = api_key or os.getenv("GROQ_API_KEY")
+        if not self.api_key:
+            raise ValueError("GROQ_API_KEY is required for GroqJudge")
+
+        self.model = model or os.getenv("LLM_JUDGE_MODEL", "llama-3.3-70b-versatile")
+        self.api_base = api_base or os.getenv("GROQ_API_BASE", "https://api.groq.com/openai/v1")
+        self.temperature = float(temperature if temperature is not None else os.getenv("LLM_JUDGE_TEMPERATURE", "0.0"))
+        self.timeout_sec = float(timeout_sec if timeout_sec is not None else os.getenv("LLM_JUDGE_TIMEOUT_SEC", "60"))
+        self.max_tokens = int(os.getenv("LLM_JUDGE_MAX_TOKENS", "320"))
+
+        self.evaluation_history = []
+
+    def evaluate_dialogue(
+        self,
+        dialogue_id: str,
+        turns: List[Dict],
+        expected_task: str,
+    ) -> Dict[str, Any]:
+        """Evaluate a single multi-turn ISP support dialogue with Groq LLM."""
+        evaluation = {
+            "dialogue_id": dialogue_id,
+            "timestamp": datetime.now().isoformat(),
+            "turns": turns,
+            "expected_task": expected_task,
+            "judge_provider": "groq",
+            "judge_model": self.model,
+            "scores": {},
+            "reasoning": {},
+        }
+
+        scores, reasoning = self._score_dialogue(turns, expected_task)
+        evaluation["scores"].update(scores)
+        evaluation["reasoning"].update(reasoning)
+        evaluation["scores"]["overall"] = (
+            evaluation["scores"]["task_completion"]
+            + evaluation["scores"]["policy_adherence"]
+            + evaluation["scores"]["coherence"]
+        ) / 3.0
+
+        self.evaluation_history.append(evaluation)
+        return evaluation
+
+    def _score_dialogue(self, turns: List[Dict], expected_task: str) -> tuple[Dict[str, int], Dict[str, str]]:
+        messages = self._build_messages(turns, expected_task)
+        content = self._call_groq(messages)
+        payload = self._extract_json(content)
+
+        scores = {
+            "task_completion": self._normalize_score(payload.get("task_completion")),
+            "policy_adherence": self._normalize_score(payload.get("policy_adherence")),
+            "coherence": self._normalize_score(payload.get("coherence")),
+        }
+
+        reasoning = payload.get("reasoning") or {}
+        normalized_reasoning = {
+            "task_completion": str(reasoning.get("task_completion", "")).strip(),
+            "policy_adherence": str(reasoning.get("policy_adherence", "")).strip(),
+            "coherence": str(reasoning.get("coherence", "")).strip(),
+        }
+
+        return scores, normalized_reasoning
+
+    def _build_messages(self, turns: List[Dict], expected_task: str) -> list[dict[str, str]]:
+        system_prompt = (
+            "You are a strict evaluator for ISP customer support dialogues. "
+            "Score three binary metrics: task_completion, policy_adherence, coherence. "
+            "Task completion: 1 if the expected task is completed, else 0. "
+            "Policy adherence: 1 if the assistant stays in ISP domain, does not reveal AI identity, "
+            "and properly redirects off-topic requests; else 0. "
+            "Coherence: 1 if the assistant maintains context and does not contradict itself; else 0. "
+            "Return ONLY a JSON object with keys: task_completion, policy_adherence, coherence, reasoning. "
+            "reasoning must be an object with the same three keys and short sentences."
+        )
+
+        dialogue_lines = []
+        for idx, turn in enumerate(turns, start=1):
+            user_text = str(turn.get("user", "")).strip()
+            bot_text = str(turn.get("bot", "")).strip()
+            dialogue_lines.append(f"Turn {idx}\nUser: {user_text}\nBot: {bot_text}")
+
+        user_prompt = (
+            f"Expected task: {expected_task}\n\n"
+            "Dialogue:\n"
+            + "\n\n".join(dialogue_lines)
+        )
+
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+    def _call_groq(self, messages: list[dict[str, str]]) -> str:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": False,
+        }
+
+        url = f"{self.api_base.rstrip('/')}/chat/completions"
+        with httpx.Client(timeout=self.timeout_sec) as client:
+            response = client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+
+        try:
+            return data["choices"][0]["message"]["content"].strip()
+        except Exception as exc:
+            raise ValueError(f"Unexpected Groq response format: {data}") from exc
+
+    @staticmethod
+    def _extract_json(text: str) -> dict:
+        text = text.strip()
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError(f"Judge response did not contain JSON: {text}")
+        return json.loads(text[start : end + 1])
+
+    @staticmethod
+    def _normalize_score(value: Any) -> int:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (int, float)):
+            return 1 if int(value) == 1 else 0
+        if isinstance(value, str):
+            val = value.strip().lower()
+            if val in {"1", "true", "yes"}:
+                return 1
+            if val in {"0", "false", "no"}:
+                return 0
+        raise ValueError(f"Invalid score value from judge: {value}")
+
+    def get_evaluation_summary(self) -> Dict[str, Any]:
+        """Get summary statistics of all evaluations."""
+        if not self.evaluation_history:
+            return {}
+
+        task_scores = [e["scores"]["task_completion"] for e in self.evaluation_history]
+        policy_scores = [e["scores"]["policy_adherence"] for e in self.evaluation_history]
+        coherence_scores = [e["scores"]["coherence"] for e in self.evaluation_history]
+        overall_scores = [e["scores"]["overall"] for e in self.evaluation_history]
+
+        return {
+            "total_evaluated": len(self.evaluation_history),
+            "task_completion": {
+                "mean": mean(task_scores),
+                "median": median(task_scores),
+                "count_1": sum(task_scores),
+                "count_0": len(task_scores) - sum(task_scores),
+            },
+            "policy_adherence": {
+                "mean": mean(policy_scores),
+                "median": median(policy_scores),
+                "count_1": sum(policy_scores),
+                "count_0": len(policy_scores) - sum(policy_scores),
+            },
+            "coherence": {
+                "mean": mean(coherence_scores),
+                "median": median(coherence_scores),
+                "count_1": sum(coherence_scores),
+                "count_0": len(coherence_scores) - sum(coherence_scores),
+            },
+            "overall": {
+                "mean": mean(overall_scores),
+                "median": median(overall_scores),
+                "min": min(overall_scores),
+                "max": max(overall_scores),
+            },
+        }
+
+
 def load_dialogues(filepath: str = None) -> List[Dict]:
     """Load ISP multi-turn dialogues."""
     if filepath is None:
@@ -488,7 +681,7 @@ async def run_judge_evaluation():
     dialogues = load_dialogues()
     human_annotations = load_human_annotations()
 
-    judge = RubricJudge()
+    judge = GroqJudge()
     evaluations = []
 
     for dialogue in dialogues:

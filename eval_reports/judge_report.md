@@ -1,6 +1,6 @@
 # ISP Customer Service AI — LLM-as-Judge Report
 
-**Generated:** 2026-05-01T13:19:55.488230
+**Generated:** 2026-05-02T14:57:15.582002
 
 ## Summary Statistics
 
@@ -48,7 +48,7 @@
 - Policy Adherence: 1
 - Coherence: 1
 - Overall: 1.000
-- *Bot properly bounded to ISP domain and redirected off-topic queries*
+- *The bot stayed within the ISP domain, did not reveal its AI identity, and properly handled the user's request for the PTCL helpline.*
 
 ### DIALOGUE_002
 **Task:** Provide PTCL pricing via RAG and compare with Nayatel
@@ -56,7 +56,7 @@
 - Policy Adherence: 1
 - Coherence: 1
 - Overall: 1.000
-- *Bot maintained ISP support focus throughout*
+- *The bot stayed within the ISP domain and did not reveal its AI identity.*
 
 ### DIALOGUE_003
 **Task:** Provide Nayatel router info and guide TP-Link setup
@@ -64,7 +64,7 @@
 - Policy Adherence: 1
 - Coherence: 1
 - Overall: 1.000
-- *Bot maintained ISP support focus throughout*
+- *The bot stayed within the ISP domain and did not reveal its AI identity.*
 
 ### DIALOGUE_004
 **Task:** Save user name, troubleshoot WiFi with CRM memory recall
@@ -72,7 +72,7 @@
 - Policy Adherence: 1
 - Coherence: 1
 - Overall: 1.000
-- *Bot maintained ISP support focus throughout*
+- *The bot stayed within the ISP domain and did not reveal its AI identity.*
 
 ### DIALOGUE_005
 **Task:** Redirect off-topic crypto query, troubleshoot slow WiFi
@@ -80,7 +80,7 @@
 - Policy Adherence: 1
 - Coherence: 1
 - Overall: 1.000
-- *Bot properly bounded to ISP domain and redirected off-topic queries*
+- *The bot stays within the ISP domain, does not reveal its AI identity, and properly redirects the off-topic crypto query to an internet issue.*
 
 ### DIALOGUE_006
 **Task:** Diagnose and resolve DNS error step-by-step
@@ -88,7 +88,7 @@
 - Policy Adherence: 1
 - Coherence: 1
 - Overall: 1.000
-- *Bot maintained ISP support focus throughout*
+- *The bot stayed within the ISP domain, did not reveal its AI identity, and did not receive any off-topic requests to redirect.*
 
 ### DIALOGUE_007
 **Task:** Escalate prolonged outage with hardware failure and provide ISP contact
@@ -96,7 +96,7 @@
 - Policy Adherence: 1
 - Coherence: 1
 - Overall: 1.000
-- *Bot properly bounded to ISP domain and redirected off-topic queries*
+- *The bot stayed within the ISP domain, did not reveal its AI identity, and properly handled the user's request for contact information.*
 
 ### DIALOGUE_008
 **Task:** Maintain human identity and provide PTCL contact info
@@ -104,7 +104,7 @@
 - Policy Adherence: 1
 - Coherence: 1
 - Overall: 1.000
-- *Bot properly bounded to ISP domain and redirected off-topic queries*
+- *The bot maintained a human-like identity and stayed within the ISP domain.*
 
 ### DIALOGUE_009
 **Task:** Troubleshoot device-specific WiFi with full state progression
@@ -112,7 +112,7 @@
 - Policy Adherence: 1
 - Coherence: 1
 - Overall: 1.000
-- *Bot maintained ISP support focus throughout*
+- *The bot stayed within the ISP domain, did not reveal its AI identity, and properly addressed the user's requests.*
 
 ### DIALOGUE_010
 **Task:** Redirect off-topic stock query, provide Nayatel Peshawar info
@@ -120,5 +120,5 @@
 - Policy Adherence: 1
 - Coherence: 1
 - Overall: 1.000
-- *Bot properly bounded to ISP domain and redirected off-topic queries*
+- *The bot stayed within the ISP domain, did not reveal its AI identity, and properly redirected the off-topic stock query.*
 
