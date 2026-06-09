@@ -9,6 +9,7 @@ const createSessionId = () => {
 };
 
 const USER_ID_STORAGE_KEY = 'isp_agent_user_id';
+const THEME_STORAGE_KEY = 'isp_agent_theme';
 
 const hashString = (input) => {
   let hash = 2166136261;
@@ -52,6 +53,23 @@ const getOrCreatePersistentUserId = () => {
   }
 };
 
+const getInitialTheme = () => {
+  if (typeof window === 'undefined') {
+    return 'dark';
+  }
+
+  try {
+    const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (savedTheme === 'light' || savedTheme === 'dark') {
+      return savedTheme;
+    }
+  } catch (_err) {
+    return 'dark';
+  }
+
+  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+};
+
 function App() {
   // const [messages, setMessages] = useState([]); // Stores the chat history
   const [messages, setMessages] = useState([
@@ -64,6 +82,7 @@ function App() {
   const [persistentUserId] = useState(() => getOrCreatePersistentUserId());
   const [isTyping, setIsTyping] = useState(false);
   const [agentStatus, setAgentStatus] = useState('');
+  const [theme, setTheme] = useState(() => getInitialTheme());
 
   // Voice-related state
   const [isRecording, setIsRecording] = useState(false);
@@ -97,6 +116,15 @@ function App() {
   const scrollRef = useRef(null);
   const IS_OFFLINE = false;
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch (_err) {
+      // Theme persistence is a UI preference; ignore storage failures.
+    }
+  }, [theme]);
+
   const getWsBaseUrl = () => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     // If served via nginx at :3000, use same host so /ws proxy works.
@@ -114,7 +142,7 @@ function App() {
     // backend/main.py route is /ws/chat (session_id is sent in the JSON payload)
     socket.current = new WebSocket(`${getWsBaseUrl()}/ws/chat`);
 
-    socket.current.onopen = () => console.log("✅ Connected to AI Backend");
+    socket.current.onopen = () => console.log("Connected to AI Backend");
 
     socket.current.onmessage = (event) => {
       try {
@@ -160,7 +188,7 @@ function App() {
     };
 
     socket.current.onclose = () => {
-      console.log("❌ Disconnected");
+      console.log("Disconnected");
       setIsTyping(false);
       setAgentStatus('');
     };
@@ -174,7 +202,7 @@ function App() {
 
     voiceSocket.current = new WebSocket(`${getWsBaseUrl()}/ws/voice-chat`);
 
-    voiceSocket.current.onopen = () => console.log("✅ Connected to Voice Backend");
+    voiceSocket.current.onopen = () => console.log("Connected to Voice Backend");
 
     voiceSocket.current.onmessage = (event) => {
       if (typeof event.data === 'string') {
@@ -238,7 +266,7 @@ function App() {
     };
 
     voiceSocket.current.onclose = () => {
-      console.log("❌ Voice WebSocket disconnected");
+      console.log("Voice WebSocket disconnected");
       setIsVoiceTurnActive(false);
       setIsVoiceProcessing(false);
       setIsVoiceLoading(false);
@@ -437,7 +465,7 @@ function App() {
       setIsRecording(true);
     } catch (error) {
       console.error('Error starting recording:', error);
-      setMessages(prev => [...prev, { role: 'ai', content: "❌ Error: Could not access microphone." }]);
+      setMessages(prev => [...prev, { role: 'ai', content: "Error: Could not access microphone." }]);
     }
   };
 
@@ -473,7 +501,7 @@ function App() {
     }
 
     if (!voiceSocket.current || voiceSocket.current.readyState !== WebSocket.OPEN) {
-      setMessages(prev => [...prev, { role: 'ai', content: "❌ Error: Voice connection not available." }]);
+      setMessages(prev => [...prev, { role: 'ai', content: "Error: Voice connection not available." }]);
       setIsVoiceProcessing(false);
       setIsVoiceTurnActive(false);
       return;
@@ -497,7 +525,7 @@ function App() {
       voiceSocket.current.send(arrayBuffer);
     } catch (error) {
       console.error('Error sending audio:', error);
-      setMessages(prev => [...prev, { role: 'ai', content: "❌ Error: Failed to send audio." }]);
+      setMessages(prev => [...prev, { role: 'ai', content: "Error: Failed to send audio." }]);
       setIsVoiceTurnActive(false);
       setIsVoiceProcessing(false);
     }
@@ -594,7 +622,7 @@ function App() {
         }));
       } else {
         // Failure Handling (Requirement 6)
-        setMessages(prev => [...prev, { role: 'ai', content: "⚠️ Error: Connection lost. Please refresh." }]);
+        setMessages(prev => [...prev, { role: 'ai', content: "Error: Connection lost. Please refresh." }]);
         setIsTyping(false);
         setAgentStatus('');
       }
@@ -662,24 +690,26 @@ function App() {
   };
 
   return (
-    <div className="app-container">
-      {/* Background Shapes */}
-      <div className="bg-decoration">
-        <div className="shape circle s1"></div>
-        <div className="shape circle s2"></div>
-        <div className="shape bug b1"></div>
-        <div className="shape bug b2"></div>
-      </div>
-
+    <div className="app-container" data-theme={theme}>
       <aside className="sidebar">
+        <div className="sidebar-brand">
+          <div className="brand-mark">ISP</div>
+          <div>
+            <p>Support Desk</p>
+            <span>AI-assisted troubleshooting</span>
+          </div>
+        </div>
         <button 
           className="new-chat-btn" 
           onClick={resetChat}
           disabled={isTyping} // Disable when AI is busy
         >
-          + New Chat \⁠(⁠๑⁠╹⁠◡⁠╹⁠๑⁠)⁠ﾉ
+          New chat
         </button>
         <div className="history-list">
+          {chatHistory.length === 0 && (
+            <div className="history-empty">No saved conversations yet.</div>
+          )}
           {chatHistory.map((chat) => (
             <div 
               key={chat.id} 
@@ -694,14 +724,33 @@ function App() {
 
       <main className="chat-main">
         <header className="chat-header">
-          <span>Customer Service ヾ⁠(⁠･⁠ω⁠･⁠*⁠)⁠ﾉ</span>
+          <div className="header-copy">
+            <span className="eyebrow">Customer Service</span>
+            <h1>ISP Tech Support Agent</h1>
+          </div>
+          <div className="theme-controls" aria-label="Theme controls">
+            <button
+              type="button"
+              className={theme === 'light' ? 'active' : ''}
+              onClick={() => setTheme('light')}
+            >
+              Light
+            </button>
+            <button
+              type="button"
+              className={theme === 'dark' ? 'active' : ''}
+              onClick={() => setTheme('dark')}
+            >
+              Dark
+            </button>
+          </div>
         </header>
 
         <div className="message-list">
           {messages.map((msg, index) => (
             <div key={index} className={`message-row ${msg.role === 'user' ? 'user-side' : 'ai-side'}`}>
               <div className="avatar">
-                {msg.role === 'user' ? '(⁠╹⁠▽⁠╹⁠⁠)' : '(⁠≧⁠▽⁠≦⁠)'}
+                {msg.role === 'user' ? 'You' : 'AI'}
               </div>
               <div className="message-content">{msg.content}</div>
             </div>
@@ -712,7 +761,7 @@ function App() {
               <div className="dot"></div>
               <div className="dot"></div>
               <div className="dot"></div>
-              <span>{agentStatus || 'us ko sochne do... (⁠･⁠o⁠･⁠;⁠)'}</span>
+              <span>{agentStatus || 'Working on your request...'}</span>
             </div>
           )}
           <div ref={scrollRef} />
@@ -772,7 +821,7 @@ function App() {
                   onClick={isRecording ? stopRecording : startRecording}
                   disabled={isPlayingAudio || isVoiceProcessing || isVoiceTurnActive}
                 >
-                  {isRecording ? '⏹️ Stop' : '🎤 Speak'}
+                  {isRecording ? 'Stop' : 'Speak'}
                 </button>
                 {(isRecording || liveTranscript) && (
                   <div className="voice-live-area">
@@ -814,7 +863,7 @@ function App() {
               disabled={isTyping}
               title={isVoiceMode ? 'Switch to Text Mode' : 'Switch to Voice Mode'}
             >
-              {isVoiceMode ? '📝' : '🎤'}
+              {isVoiceMode ? 'Text' : 'Voice'}
             </button>
           </div>
         </div>
